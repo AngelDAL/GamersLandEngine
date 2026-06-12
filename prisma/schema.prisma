@@ -1,0 +1,318 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "mysql"
+}
+
+enum Role {
+  ADMIN
+  ORGANIZER
+  PLAYER
+  SPONSOR
+}
+
+enum Game {
+  LEAGUE_OF_LEGENDS
+  VALORANT
+  FORTNITE
+  LOL_1V1
+}
+
+enum BracketType {
+  SINGLE_ELIMINATION
+  DOUBLE_ELIMINATION
+  ROUND_ROBIN
+  SWISS
+}
+
+enum TournamentStatus {
+  DRAFT
+  OPEN_REGISTRATION
+  CLOSED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum RegistrationStatus {
+  PENDING
+  CONFIRMED
+  REJECTED
+}
+
+enum MemberStatus {
+  PENDING
+  ACTIVE
+  REJECTED
+}
+
+enum MatchStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+}
+
+enum RoundStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+}
+
+enum ChatRoomType {
+  TOURNAMENT
+  MATCH
+  TEAM
+}
+
+enum PlayerMatchResult {
+  WON
+  LOST
+  DRAW
+  DNP
+}
+
+enum TeamMatchResultEnum {
+  WON
+  LOST
+  DRAW
+  FORFEIT
+}
+
+enum PrizeType {
+  POSITION
+  PARTICIPATION
+  SPONSOR_GIFT
+}
+
+model User {
+  id             String   @id @default(uuid())
+  username       String   @unique
+  role           Role     @default(PLAYER)
+  qrCode         String?
+  avatarUrl      String?
+  createdAt      DateTime @default(now())
+
+  memberships              TeamMember[]
+  registrations            TournamentRegistration[]
+  createdTournaments       Tournament[]             @relation("TournamentCreator")
+  organizedTournaments     TournamentOrganizer[]
+  sentMessages             ChatMessage[]
+  ownedTeams               Team[]                   @relation("TeamCaptain")
+  matchResults             MatchResult[]
+  claimedPrizes            PrizeClaim[]
+  sponsorPrizes            Prize[]                  @relation("SponsorPrizes")
+  clerkClaims              PrizeClaim[]             @relation("ClerkClaims")
+}
+
+model Team {
+  id        String   @id @default(uuid())
+  name      String
+  captainId String
+  logoUrl   String?
+  createdAt DateTime @default(now())
+
+  captain        User              @relation("TeamCaptain", fields: [captainId], references: [id])
+  members        TeamMember[]
+  participations TournamentTeam[]
+  teamResults    TeamMatchResult[]
+  registrations  TournamentRegistration[]
+  matchesAsTeam1 Match[]             @relation("MatchTeam1")
+  matchesAsTeam2 Match[]             @relation("MatchTeam2")
+  matchWins      Match[]             @relation("MatchWinner")
+}
+
+model TeamMember {
+  id      String       @id @default(uuid())
+  userId  String
+  teamId  String
+  status  MemberStatus @default(PENDING)
+  message String?
+
+  user User @relation(fields: [userId], references: [id])
+  team Team @relation(fields: [teamId], references: [id])
+
+  @@unique([userId, teamId])
+}
+
+model Tournament {
+  id                   String           @id @default(uuid())
+  name                 String
+  game                 Game
+  description          String?
+  entryFee             Decimal?         @default(0)
+  maxTeams             Int
+  minTeams             Int              @default(4)
+  isTeamBased          Boolean          @default(true)
+  bracketType          BracketType      @default(SINGLE_ELIMINATION)
+  status               TournamentStatus @default(DRAFT)
+  eventDate            DateTime
+  registrationDeadline DateTime?
+  location             String?
+  rules                String?
+  createdAt            DateTime         @default(now())
+  createdById          String
+
+  createdBy      User                    @relation("TournamentCreator", fields: [createdById], references: [id])
+  organizers     TournamentOrganizer[]
+  registrations  TournamentRegistration[]
+  rounds         TournamentRound[]
+  prizes         Prize[]
+  tournamentTeams TournamentTeam[]
+}
+
+model TournamentOrganizer {
+  id           String @id @default(uuid())
+  tournamentId String
+  userId       String
+
+  tournament Tournament @relation(fields: [tournamentId], references: [id])
+  user       User       @relation(fields: [userId], references: [id])
+
+  @@unique([tournamentId, userId])
+}
+
+model TournamentRegistration {
+  id           String             @id @default(uuid())
+  tournamentId String
+  userId       String
+  teamId       String?
+  status       RegistrationStatus @default(PENDING)
+  paid         Boolean            @default(false)
+  registeredBy String?
+  createdAt    DateTime           @default(now())
+
+  tournament Tournament @relation(fields: [tournamentId], references: [id])
+  user       User       @relation(fields: [userId], references: [id])
+  team       Team?      @relation(fields: [teamId], references: [id])
+
+  @@unique([tournamentId, userId])
+}
+
+model TournamentTeam {
+  id           String @id @default(uuid())
+  tournamentId String
+  teamId       String
+  seed         Int?
+
+  tournament Tournament @relation(fields: [tournamentId], references: [id])
+  team       Team       @relation(fields: [teamId], references: [id])
+
+  @@unique([tournamentId, teamId])
+}
+
+model TournamentRound {
+  id           String      @id @default(uuid())
+  tournamentId String
+  roundNumber  Int
+  status       RoundStatus @default(PENDING)
+
+  tournament Tournament @relation(fields: [tournamentId], references: [id])
+  matches    Match[]
+}
+
+model Match {
+  id              String      @id @default(uuid())
+  roundId         String
+  team1Id         String?
+  team2Id         String?
+  winnerId        String?
+  score1          Int?
+  score2          Int?
+  status          MatchStatus @default(PENDING)
+  bracketPosition Int?
+  notes           String?
+  scheduledAt     DateTime?
+  startedAt       DateTime?
+  endedAt         DateTime?
+  log             String?
+
+  round  TournamentRound @relation(fields: [roundId], references: [id])
+  team1  Team?           @relation("MatchTeam1", fields: [team1Id], references: [id])
+  team2  Team?           @relation("MatchTeam2", fields: [team2Id], references: [id])
+  winner Team?           @relation("MatchWinner", fields: [winnerId], references: [id])
+
+  results     MatchResult[]
+  teamResults TeamMatchResult[]
+}
+
+model MatchResult {
+  id      String            @id @default(uuid())
+  matchId String
+  userId  String
+  teamId  String?
+  result  PlayerMatchResult
+  score   Int?
+  stats   Json?
+
+  match Match @relation(fields: [matchId], references: [id])
+  user  User  @relation(fields: [userId], references: [id])
+}
+
+model TeamMatchResult {
+  id      String              @id @default(uuid())
+  matchId String
+  teamId  String
+  result  TeamMatchResultEnum
+  score   Int?
+
+  match Match @relation(fields: [matchId], references: [id])
+  team  Team  @relation(fields: [teamId], references: [id])
+}
+
+model Prize {
+  id           String    @id @default(uuid())
+  tournamentId String
+  name         String
+  description  String?
+  type         PrizeType
+  position     Int?
+  value        String?
+  sponsorId    String?
+  imageUrl     String?
+  maxClaims    Int?
+  createdAt    DateTime  @default(now())
+
+  tournament Tournament @relation(fields: [tournamentId], references: [id])
+  sponsor    User?      @relation("SponsorPrizes", fields: [sponsorId], references: [id])
+  claims     PrizeClaim[]
+}
+
+model PrizeClaim {
+  id        String   @id @default(uuid())
+  prizeId   String
+  userId    String
+  claimedBy String
+  notes     String?
+  claimedAt DateTime @default(now())
+
+  prize Prize @relation(fields: [prizeId], references: [id])
+  user  User  @relation(fields: [userId], references: [id])
+  clerk User  @relation("ClerkClaims", fields: [claimedBy], references: [id])
+
+  @@unique([prizeId, userId])
+}
+
+model ChatRoom {
+  id           String       @id @default(uuid())
+  type         ChatRoomType
+  matchId      String?      @unique
+  tournamentId String?
+  teamId       String?      @unique
+  createdAt    DateTime     @default(now())
+
+  messages ChatMessage[]
+}
+
+model ChatMessage {
+  id        String   @id @default(uuid())
+  roomId    String
+  senderId  String
+  content   String
+  createdAt DateTime @default(now())
+
+  room   ChatRoom @relation(fields: [roomId], references: [id])
+  sender User     @relation(fields: [senderId], references: [id])
+}
