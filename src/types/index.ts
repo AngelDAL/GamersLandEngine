@@ -1,4 +1,4 @@
-import type { Role, TournamentStatus, BracketType } from "@/generated/prisma";
+import type { Role, TournamentStatus, BracketType } from "@/generated/prisma/enums";
 
 export type UserSession = {
   id: string;

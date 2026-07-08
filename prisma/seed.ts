@@ -1,4 +1,5 @@
-import { PrismaClient } from "../src/generated/prisma";
+import "dotenv/config";
+import { PrismaClient } from "../src/generated/prisma/client";
 import { PrismaMariaDb } from "@prisma/adapter-mariadb";
 
 const url = new URL(process.env.DATABASE_URL || "mysql://root:@localhost:3306/gamersland");
