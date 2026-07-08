@@ -33,6 +33,7 @@ export async function GET() {
     include: {
       captain: { select: { id: true, username: true } },
       members: { include: { user: { select: { id: true, username: true } } } },
+      _count: { select: { members: { where: { status: "ACTIVE" } } } },
     },
   });
 

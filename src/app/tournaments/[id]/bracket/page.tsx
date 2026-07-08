@@ -13,8 +13,6 @@ export default async function BracketPage({ params }: { params: Promise<{ id: st
         include: {
           matches: {
             include: {
-              team1: { select: { id: true, name: true, logoUrl: true } },
-              team2: { select: { id: true, name: true, logoUrl: true } },
               winner: { select: { id: true, name: true } },
             },
             orderBy: { bracketPosition: "asc" },
@@ -52,17 +50,20 @@ export default async function BracketPage({ params }: { params: Promise<{ id: st
     userTeamIds = memberships.map((m) => m.teamId);
   }
 
-  // For individual tournaments, resolve player names
+  // For individual tournaments, get registered players
+  let individualPlayers: { id: string; name: string }[] = [];
   let playerNames: Record<string, string> = {};
   if (!tournament.isTeamBased) {
     const registrations = await prisma.tournamentRegistration.findMany({
-      where: { tournamentId: id, status: "CONFIRMED" },
+      where: { tournamentId: id },
       include: { user: { select: { id: true, username: true } } },
     });
+    individualPlayers = registrations.map((r) => ({ id: r.user.id, name: r.user.username }));
     for (const r of registrations) {
       playerNames[r.user.id] = r.user.username;
     }
-    // Also check all player IDs referenced in matches
+
+    // Also resolve any player IDs referenced in matches (for already generated brackets)
     const playerIds = new Set<string>();
     for (const round of tournament.rounds) {
       for (const match of round.matches) {
@@ -70,12 +71,14 @@ export default async function BracketPage({ params }: { params: Promise<{ id: st
         if (match.team2Id) playerIds.add(match.team2Id);
       }
     }
-    const users = await prisma.user.findMany({
-      where: { id: { in: Array.from(playerIds) } },
-      select: { id: true, username: true },
-    });
-    for (const u of users) {
-      if (!playerNames[u.id]) playerNames[u.id] = u.username;
+    if (playerIds.size > 0) {
+      const users = await prisma.user.findMany({
+        where: { id: { in: Array.from(playerIds) } },
+        select: { id: true, username: true },
+      });
+      for (const u of users) {
+        if (!playerNames[u.id]) playerNames[u.id] = u.username;
+      }
     }
   }
 
@@ -85,9 +88,18 @@ export default async function BracketPage({ params }: { params: Promise<{ id: st
     captainId: tt.team.captainId,
   }));
 
+  // Serialize tournament to plain object (fix Decimal error)
+  const serializedTournament = {
+    ...tournament,
+    entryFee: tournament.entryFee ? Number(tournament.entryFee) : null,
+    eventDate: tournament.eventDate.toISOString(),
+    createdAt: tournament.createdAt.toISOString(),
+    registrationDeadline: tournament.registrationDeadline?.toISOString() || null,
+  };
+
   return (
     <BracketInteractive
-      tournament={tournament}
+      tournament={serializedTournament}
       canEdit={!!canEdit}
       userId={session?.user?.id}
       userTeamIds={userTeamIds}
@@ -96,6 +108,8 @@ export default async function BracketPage({ params }: { params: Promise<{ id: st
       registeredTeams={registeredTeams}
       isIndividual={!tournament.isTeamBased}
       playerNames={playerNames}
+      individualPlayers={individualPlayers}
+      maxSlots={tournament.maxTeams}
     />
   );
 }

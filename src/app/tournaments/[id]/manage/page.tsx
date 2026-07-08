@@ -4,6 +4,8 @@ import { redirect, notFound } from "next/navigation";
 import Link from "next/link";
 import { ManageTournamentClient } from "./ManageTournamentClient";
 
+export const dynamic = "force-dynamic";
+
 export default async function ManageTournamentPage({ params }: { params: Promise<{ id: string }> }) {
   const session = await auth();
   if (!session || (session.user.role !== "ADMIN" && session.user.role !== "ORGANIZER")) {
@@ -16,6 +18,17 @@ export default async function ManageTournamentPage({ params }: { params: Promise
     include: {
       organizers: { include: { user: { select: { id: true, username: true } } } },
       prizes: { orderBy: { position: "asc" } },
+      rounds: {
+        include: {
+          matches: {
+            include: {
+              winner: { select: { id: true, name: true } },
+            },
+            orderBy: { bracketPosition: "asc" },
+          },
+        },
+        orderBy: { roundNumber: "asc" },
+      },
       tournamentTeams: {
         include: {
           team: {
@@ -32,19 +45,22 @@ export default async function ManageTournamentPage({ params }: { params: Promise
 
   if (!tournament) notFound();
 
+  // Get ALL players in the system (for search)
+  const allPlayers = await prisma.user.findMany({
+    where: { role: "PLAYER" },
+    select: { id: true, username: true, role: true, avatarUrl: true },
+    orderBy: { username: "asc" },
+  });
+
   // Get registered users for this tournament
   const registrations = await prisma.tournamentRegistration.findMany({
     where: { tournamentId: id },
-    select: { userId: true },
+    include: { user: { select: { id: true, username: true, role: true, avatarUrl: true } } },
   });
-  const registeredUserIds = new Set(registrations.map((r) => r.userId));
+  const players = registrations.map((r) => r.user);
+  const registeredUserIds = new Set(players.map((p) => p.id));
 
-  const [allPlayers, orgUsers, teams] = await Promise.all([
-    prisma.user.findMany({
-      where: { role: "PLAYER" },
-      select: { id: true, username: true, role: true, avatarUrl: true },
-      orderBy: { username: "asc" },
-    }),
+  const [orgUsers, teams] = await Promise.all([
     prisma.user.findMany({
       where: { role: { in: ["ORGANIZER", "ADMIN"] } },
       select: { id: true, username: true, role: true },
@@ -72,9 +88,6 @@ export default async function ManageTournamentPage({ params }: { params: Promise
       }))
     ),
   ]);
-
-  // Filter players: only those registered to this tournament
-  const players = allPlayers.filter((p) => registeredUserIds.has(p.id));
 
   // Free agents: registered players NOT in any team
   const membersInTeam = new Set(teams.flatMap((t: any) => t.members.map((m: any) => m.userId)));
@@ -106,13 +119,23 @@ export default async function ManageTournamentPage({ params }: { params: Promise
     })),
   };
 
+  const gameLabel = tournament.game?.replace(/_/g, " ") || "Torneo";
+
   return (
     <div className="max-w-7xl mx-auto px-4 py-8">
+      {/* Banner compacto */}
+      {tournament.imageUrl && (
+        <div className="relative h-24 rounded-xl overflow-hidden mb-6">
+          <img src={tournament.imageUrl} alt="" className="absolute inset-0 w-full h-full object-cover" />
+          <div className="absolute inset-0 bg-gradient-to-r from-background/80 via-background/20 to-transparent" />
+        </div>
+      )}
+
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-3xl font-bold text-gold">{tournament.name}</h1>
           <p className="text-sm text-muted mt-1">
-            {tournament.game.replace(/_/g, " ")} — {tournament.status}
+            {gameLabel} — {tournament.status}
           </p>
         </div>
         <Link href={`/tournaments/${id}`} className="text-sm text-muted hover:text-foreground">
@@ -123,6 +146,7 @@ export default async function ManageTournamentPage({ params }: { params: Promise
       <ManageTournamentClient
         tournament={serialized}
         players={players}
+        allPlayers={allPlayers}
         organizers={orgUsers}
         teams={teams}
         freeAgents={freeAgents}

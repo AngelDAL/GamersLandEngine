@@ -15,6 +15,11 @@ const gameConfig: Record<string, { icon: typeof Sword; gradient: string; label: 
   LOL_1V1: { icon: Target, gradient: "from-amber-900/90 via-amber-800/50 to-background", label: "LoL 1v1" },
 };
 
+function getGameConfig(game: string) {
+  const key = game?.toUpperCase().replace(/[\s-]+/g, "_") || "";
+  return gameConfig[key] || { icon: Gamepad2, gradient: "from-[#0A0E1A]/90 via-[#141B2D]/50 to-background", label: game || "Torneo" };
+}
+
 const bracketLabels: Record<string, string> = {
   SINGLE_ELIMINATION: "Eliminación Simple",
   DOUBLE_ELIMINATION: "Doble Eliminación",
@@ -47,8 +52,7 @@ export default async function TournamentPage({ params }: { params: Promise<{ id:
         include: {
           matches: {
             include: {
-              team1: { select: { id: true, name: true } },
-              team2: { select: { id: true, name: true } },
+              winner: { select: { id: true, name: true } },
             },
             take: 2,
           },
@@ -62,7 +66,7 @@ export default async function TournamentPage({ params }: { params: Promise<{ id:
 
   if (!tournament) notFound();
 
-  const game = gameConfig[tournament.game] || gameConfig.LEAGUE_OF_LEGENDS;
+  const game = getGameConfig(tournament.game);
   const Icon = game.icon;
   const isAdmin = session?.user?.role === "ADMIN" || session?.user?.role === "ORGANIZER";
   const userReg = session?.user?.id
@@ -86,18 +90,48 @@ export default async function TournamentPage({ params }: { params: Promise<{ id:
     members: tt.team.members,
   }));
 
+  // Get registered players for name resolution (individual tournaments)
+  const registeredPlayers = await prisma.tournamentRegistration.findMany({
+    where: { tournamentId: id },
+    include: { user: { select: { id: true, username: true } } },
+  });
+
   const totalRounds = tournament.rounds.length;
+
+  // Build name lookup map
+  const nameMap = new Map<string, string>();
+  for (const t of teams) nameMap.set(t.id, t.name);
+  for (const r of registeredPlayers) nameMap.set(r.user.id, r.user.username);
+
+  const isTeamBased = tournament.isTeamBased !== false;
+
+  // Determine user's team/id for highlight
+  const userId = session?.user?.id;
+  const userTeamId = userTeamMember?.team?.id;
+  const isUserInMatch = (match: any) =>
+    isTeamBased
+      ? match.team1Id === userTeamId || match.team2Id === userTeamId
+      : match.team1Id === userId || match.team2Id === userId;
 
   return (
     <div className="min-h-screen bg-background">
       {/* ── Banner ── */}
-      <div className={`relative h-48 md:h-64 bg-gradient-to-br ${game.gradient} overflow-hidden`}>
-        <div className="absolute inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNjAiIGhlaWdodD0iNjAiIHZpZXdCb3g9IjAgMCA2MCA2MCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48ZyBmaWxsPSJub25lIiBmaWxsLXJ1bGU9ImV2ZW5vZGQiPjxnIGZpbGw9IiNmZmYiIGZpbGwtb3BhY2l0eT0iMC4wNCI+PHBhdGggZD0iTTM2IDM0djItSDI0di0yaDEyek0zNiAyNHYySDI0di0yaDEyeiIvPjwvZz48L2c+PC9zdmc+')] opacity-50" />
-        <div className="absolute inset-0 bg-gradient-to-t from-background via-transparent to-transparent" />
+      <div className="relative h-48 md:h-64 overflow-hidden">
+        {tournament.imageUrl ? (
+          <img src={tournament.imageUrl} alt="" className="absolute inset-0 w-full h-full object-cover" />
+        ) : (
+          <div className={`absolute inset-0 bg-gradient-to-br ${game.gradient}`} />
+        )}
+        <div className="absolute inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNjAiIGhlaWdodD0iNjAiIHZpZXdCb3g9IjAgMCA2MCA2MCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48ZyBmaWxsPSJub25lIiBmaWxsLXJ1bGU9ImV2ZW5vZGQiPjxnIGZpbGw9IiNmZmYiIGZpbGwtb3BhY2l0eT0iMC4wNCI+PHBhdGggZD0iTTM2IDM0djItSDI0di0yaDEyek0zNiAyNHYySDI0di0yaDEyeiIvPjwvZz48L2c+PC9zdmc+')] opacity-30" />
+        <div className="absolute inset-0 bg-gradient-to-t from-background/90 via-background/20 to-transparent" />
         <div className="relative max-w-6xl mx-auto px-4 h-full flex items-end pb-6">
           <div className="flex items-center gap-4">
             <div className="w-14 h-14 md:w-20 md:h-20 rounded-2xl bg-black/40 backdrop-blur border border-white/10 flex items-center justify-center">
-              <Icon className="w-7 h-7 md:w-10 md:h-10 text-white" />
+              {tournament.imageUrl ? (
+                <img src={tournament.imageUrl} alt="" className="w-full h-full object-cover rounded-2xl" />
+              ) : (
+                <Icon className="w-7 h-7 md:w-10 md:h-10 text-white" />
+              )}
             </div>
             <div>
               <h1 className="text-2xl md:text-4xl font-black text-white drop-shadow-lg">{tournament.name}</h1>
@@ -118,21 +152,16 @@ export default async function TournamentPage({ params }: { params: Promise<{ id:
       </div>
 
       <div className="max-w-6xl mx-auto px-4 -mt-6 relative">
-        {/* ── Admin Link ── */}
         {isAdmin && (
           <div className="flex justify-end mb-4">
-            <Link
-              href={`/tournaments/${id}/manage`}
-              className="inline-flex items-center gap-1.5 px-4 py-2 bg-gold text-background font-bold rounded-lg text-sm hover:bg-gold-hover transition-colors"
-            >
-              <ClipboardList className="w-4 h-4" />
-              Gestionar Torneo
+            <Link href={`/tournaments/${id}/manage`} className="inline-flex items-center gap-1.5 px-4 py-2 bg-gold text-background font-bold rounded-lg text-sm hover:bg-gold-hover transition-colors">
+              <ClipboardList className="w-4 h-4" /> Gestionar Torneo
             </Link>
           </div>
         )}
 
         {/* ── Info Cards ── */}
-        <div className="grid gap-3 md:grid-cols-4 mb-8">
+        <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-4 mb-8">
           <div className="bg-surface border border-border rounded-xl p-4 flex items-center gap-3">
             <div className="w-10 h-10 rounded-lg bg-gold/10 flex items-center justify-center shrink-0">
               <Calendar className="w-5 h-5 text-gold" />
@@ -140,13 +169,10 @@ export default async function TournamentPage({ params }: { params: Promise<{ id:
             <div className="min-w-0">
               <p className="text-[10px] text-muted uppercase tracking-wider font-bold">Fecha</p>
               <p className="font-semibold text-sm truncate">
-                {new Date(tournament.eventDate).toLocaleDateString("es-MX", {
-                  day: "numeric", month: "long",
-                })}
+                {new Date(tournament.eventDate).toLocaleDateString("es-MX", { day: "numeric", month: "long" })}
               </p>
             </div>
           </div>
-
           <div className="bg-surface border border-border rounded-xl p-4 flex items-center gap-3">
             <div className="w-10 h-10 rounded-lg bg-gold/10 flex items-center justify-center shrink-0">
               <MapPin className="w-5 h-5 text-gold" />
@@ -156,7 +182,6 @@ export default async function TournamentPage({ params }: { params: Promise<{ id:
               <p className="font-semibold text-sm truncate">{tournament.location || "Por definir"}</p>
             </div>
           </div>
-
           <div className="bg-surface border border-border rounded-xl p-4 flex items-center gap-3">
             <div className="w-10 h-10 rounded-lg bg-gold/10 flex items-center justify-center shrink-0">
               <Users className="w-5 h-5 text-gold" />
@@ -169,7 +194,6 @@ export default async function TournamentPage({ params }: { params: Promise<{ id:
               </div>
             </div>
           </div>
-
           <div className="bg-surface border border-border rounded-xl p-4 flex items-center gap-3">
             <div className="w-10 h-10 rounded-lg bg-gold/10 flex items-center justify-center shrink-0">
               <DollarSign className="w-5 h-5 text-gold" />
@@ -185,12 +209,30 @@ export default async function TournamentPage({ params }: { params: Promise<{ id:
         <TournamentDetailClient
           tournamentId={tournament.id}
           tournamentStatus={tournament.status}
+          tournamentName={tournament.name}
           session={session ? { id: session.user.id, name: session.user.name, role: session.user.role } : null}
           registration={userReg}
           teams={teams}
           freeAgents={[]}
           userTeamMember={userTeamMember}
           isTeamBased={tournament.isTeamBased !== false}
+          rounds={(tournament.rounds || []).map((r: any) => ({
+            id: r.id,
+            roundNumber: r.roundNumber,
+            matches: (r.matches || []).map((m: any) => ({
+              id: m.id,
+              team1Id: m.team1Id,
+              team2Id: m.team2Id,
+              winnerId: m.winnerId,
+              status: m.status,
+              scheduledAt: m.scheduledAt ? m.scheduledAt.toISOString() : null,
+              bracketPosition: m.bracketPosition,
+            })),
+          }))}
+          allParticipants={[
+            ...teams.map((t: any) => ({ id: t.id, name: t.name })),
+            ...registeredPlayers.map((r: any) => ({ id: r.user.id, name: r.user.username })),
+          ]}
         />
 
         {/* ── Description ── */}
@@ -231,36 +273,60 @@ export default async function TournamentPage({ params }: { params: Promise<{ id:
           </div>
         )}
 
-        {/* ── Bracket Preview ── */}
+        {/* ── Bracket Preview (full width) ── */}
         {totalRounds > 0 && (
-          <div className="bg-surface border border-border rounded-xl p-5 mb-6">
+          <div className="bg-surface border border-border rounded-xl p-4 sm:p-5 mb-6">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-lg font-bold text-gold flex items-center gap-2">
                 <Swords className="w-5 h-5" />
                 Bracket
               </h2>
-              <Link
-                href={`/tournaments/${id}/bracket`}
-                className="inline-flex items-center gap-1 text-sm text-gold hover:underline"
-              >
+              <Link href={`/tournaments/${id}/bracket`} className="inline-flex items-center gap-1 text-sm text-gold hover:underline">
                 Ver completo <ArrowRight className="w-4 h-4" />
               </Link>
             </div>
-            <div className="flex gap-4 overflow-x-auto pb-2">
-              {tournament.rounds.map((round) => (
-                <div key={round.id} className="min-w-[160px] space-y-2">
-                  <p className="text-[10px] font-bold text-gold uppercase tracking-wider text-center mb-2">
-                    Ronda {round.roundNumber}
-                  </p>
-                  {round.matches.map((match) => (
-                    <div key={match.id} className="bg-background border border-border rounded-lg p-2.5 text-xs">
-                      <p className="font-medium truncate">{match.team1?.name || "---"}</p>
-                      <p className="text-muted text-[10px] text-center">vs</p>
-                      <p className="font-medium truncate">{match.team2?.name || "---"}</p>
-                    </div>
-                  ))}
-                </div>
-              ))}
+            <div className="overflow-x-auto pb-2 -mx-4 sm:mx-0">
+              <div className="flex gap-3 sm:gap-5 px-4 sm:px-0 min-w-max">
+                {tournament.rounds.map((round) => (
+                  <div key={round.id} className="flex flex-col gap-2 min-w-[180px] sm:min-w-[220px]">
+                    <p className="text-[10px] font-black text-gold uppercase tracking-widest text-center mb-1">
+                      Ronda {round.roundNumber}
+                    </p>
+                    {round.matches.map((match) => {
+                      const t1Name = nameMap.get(match.team1Id || "") || "---";
+                      const t2Name = nameMap.get(match.team2Id || "") || "---";
+                      const isUser = userId ? isUserInMatch(match) : false;
+
+                      return (
+                        <div key={match.id} className={`bg-background border rounded-lg p-2.5 sm:p-3 text-xs transition-colors ${
+                          match.winnerId
+                            ? "border-green-500/30"
+                            : isUser
+                              ? "border-gold/50 bg-gold/5"
+                              : "border-border"
+                        }`}>
+                          <p className={`font-medium truncate ${match.winnerId === match.team1Id ? "text-green-400" : isUser ? "text-gold" : ""}`}>
+                            {match.team1Id ? t1Name : "---"}
+                          </p>
+                          <div className="flex items-center gap-1.5 text-[10px] text-muted my-1">
+                            <div className="flex-1 h-px bg-border" />
+                            <span>{match.status === "COMPLETED" ? `${match.score1 ?? 0} - ${match.score2 ?? 0}` : "VS"}</span>
+                            <div className="flex-1 h-px bg-border" />
+                          </div>
+                          <p className={`font-medium truncate ${match.winnerId === match.team2Id ? "text-green-400" : isUser ? "text-gold" : ""}`}>
+                            {match.team2Id ? t2Name : "---"}
+                          </p>
+                          {match.scheduledAt && (
+                            <p className="text-[8px] text-muted mt-1 text-center">
+                              {new Date(match.scheduledAt).toLocaleDateString("es-MX", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
+                            </p>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
         )}

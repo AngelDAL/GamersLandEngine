@@ -14,13 +14,6 @@ enum Role {
   SPONSOR
 }
 
-enum Game {
-  LEAGUE_OF_LEGENDS
-  VALORANT
-  FORTNITE
-  LOL_1V1
-}
-
 enum BracketType {
   SINGLE_ELIMINATION
   DOUBLE_ELIMINATION
@@ -105,6 +98,7 @@ model User {
   claimedPrizes            PrizeClaim[]
   sponsorPrizes            Prize[]                  @relation("SponsorPrizes")
   clerkClaims              PrizeClaim[]             @relation("ClerkClaims")
+  notifications            Notification[]
 }
 
 model Team {
@@ -119,8 +113,6 @@ model Team {
   participations TournamentTeam[]
   teamResults    TeamMatchResult[]
   registrations  TournamentRegistration[]
-  matchesAsTeam1 Match[]             @relation("MatchTeam1")
-  matchesAsTeam2 Match[]             @relation("MatchTeam2")
   matchWins      Match[]             @relation("MatchWinner")
 }
 
@@ -140,18 +132,20 @@ model TeamMember {
 model Tournament {
   id                   String           @id @default(uuid())
   name                 String
-  game                 Game
+  game                 String
   description          String?
   entryFee             Decimal?         @default(0)
   maxTeams             Int
   minTeams             Int              @default(4)
   isTeamBased          Boolean          @default(true)
+  teamSize             Int              @default(5)
   bracketType          BracketType      @default(SINGLE_ELIMINATION)
   status               TournamentStatus @default(DRAFT)
   eventDate            DateTime
   registrationDeadline DateTime?
   location             String?
   rules                String?
+  imageUrl             String?
   createdAt            DateTime         @default(now())
   createdById          String
 
@@ -230,8 +224,6 @@ model Match {
   log             String?
 
   round  TournamentRound @relation(fields: [roundId], references: [id])
-  team1  Team?           @relation("MatchTeam1", fields: [team1Id], references: [id])
-  team2  Team?           @relation("MatchTeam2", fields: [team2Id], references: [id])
   winner Team?           @relation("MatchWinner", fields: [winnerId], references: [id])
 
   results     MatchResult[]
@@ -311,8 +303,23 @@ model ChatMessage {
   roomId    String
   senderId  String
   content   String
+  imageUrl  String?
   createdAt DateTime @default(now())
 
   room   ChatRoom @relation(fields: [roomId], references: [id])
   sender User     @relation(fields: [senderId], references: [id])
+}
+
+model Notification {
+  id        String   @id @default(uuid())
+  userId    String
+  type      String
+  title     String
+  message   String
+  matchId   String?
+  read        Boolean  @default(false)
+  redirectUrl String?
+  createdAt   DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id])
 }

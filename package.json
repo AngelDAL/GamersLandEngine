@@ -3,10 +3,10 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "tsx --tsconfig tsconfig.json server.ts",
+    "dev:next": "next dev",
     "build": "npx prisma generate && next build",
     "start": "tsx --tsconfig tsconfig.json server.ts",
-    "start:dev": "next dev",
     "lint": "eslint",
     "db:push": "npx prisma db push",
     "db:generate": "npx prisma generate",

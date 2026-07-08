@@ -25,3 +25,32 @@ body {
 ::-webkit-scrollbar-track { background: #0A0E1A; }
 ::-webkit-scrollbar-thumb { background: #1E2A45; border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: #2A3A55; }
+
+/* Center all <dialog> elements */
+dialog {
+  margin: auto;
+  position: fixed;
+  inset: 0;
+}
+dialog::backdrop {
+  background: rgba(0, 0, 0, 0.6);
+}
+
+/* Confetti animation for champion celebration */
+@keyframes confetti-fall {
+  0% { transform: translateY(-10vh) rotate(0deg); opacity: 1; }
+  100% { transform: translateY(110vh) rotate(720deg); opacity: 0; }
+}
+@keyframes confetti-sway {
+  0%, 100% { margin-left: 0; }
+  50% { margin-left: 30px; }
+}
+.confetti-piece {
+  position: fixed;
+  top: -10px;
+  width: 10px;
+  height: 10px;
+  animation: confetti-fall linear forwards, confetti-sway ease-in-out infinite;
+  z-index: 100;
+  pointer-events: none;
+}

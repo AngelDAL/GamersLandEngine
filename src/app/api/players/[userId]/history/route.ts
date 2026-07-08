@@ -19,8 +19,6 @@ export async function GET(req: Request, { params }: { params: Promise<{ userId: 
               tournament: { select: { id: true, name: true, game: true } },
             },
           },
-          team1: { select: { id: true, name: true } },
-          team2: { select: { id: true, name: true } },
           winner: { select: { id: true, name: true } },
         },
       },

@@ -7,9 +7,15 @@ export function middleware(req: NextRequest) {
   const publicPaths = ["/auth/login", "/", "/api/auth"];
   const isPublic = publicPaths.some((p) => pathname.startsWith(p) || pathname === p);
 
-  const isStatic = pathname.startsWith("/_next") || pathname.startsWith("/uploads") || pathname.startsWith("/avatars");
+  // Tournament pages (list, detail, bracket) are public
+  const isTournamentView = pathname.startsWith("/tournaments/") &&
+    !pathname.endsWith("/create") &&
+    !pathname.includes("/manage") &&
+    !pathname.includes("/register");
+
+  const isStatic = pathname.startsWith("/_next") || pathname.startsWith("/uploads") || pathname.startsWith("/avatars") || pathname.startsWith("/banners");
   if (isStatic) return NextResponse.next();
-  if (isPublic) return NextResponse.next();
+  if (isPublic || isTournamentView) return NextResponse.next();
 
   const token = req.cookies.get("next-auth.session-token") || req.cookies.get("__Secure-next-auth.session-token");
   if (!token) {

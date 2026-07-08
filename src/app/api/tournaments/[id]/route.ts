@@ -15,8 +15,6 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
         include: {
           matches: {
             include: {
-              team1: { select: { id: true, name: true, logoUrl: true } },
-              team2: { select: { id: true, name: true, logoUrl: true } },
               winner: { select: { id: true, name: true } },
             },
           },

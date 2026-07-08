@@ -10,6 +10,7 @@ import {
   MessageSquare, Clock, ArrowLeft,
 } from "lucide-react";
 import Link from "next/link";
+import { LeaveTeamButton, MemberActionButton, RemoveMemberButton, PendingAction } from "./TeamActions";
 
 export default async function TeamPage({ params }: { params: Promise<{ id: string }> }) {
   const session = await auth();
@@ -37,6 +38,9 @@ export default async function TeamPage({ params }: { params: Promise<{ id: strin
   const activeMembers = team.members.filter((m) => m.status === "ACTIVE");
   const pendingMembers = team.members.filter((m) => m.status === "PENDING");
 
+  // Is the current user invited (pending)?
+  const myPending = team.members.find((m) => m.userId === session.user.id && m.status === "PENDING");
+
   return (
     <div className="max-w-5xl mx-auto px-4 py-8">
       <Link href="/tournaments" className="inline-flex items-center gap-1 text-xs text-muted hover:text-foreground mb-6">
@@ -58,6 +62,42 @@ export default async function TeamPage({ params }: { params: Promise<{ id: strin
         </div>
       </div>
 
+      {/* ── INVITATION BANNER for invited users ── */}
+      {myPending && !isMember && !isCaptain && (
+        <div className="mb-6 p-5 bg-gold/5 border-2 border-gold/40 rounded-2xl">
+          <div className="flex flex-col sm:flex-row sm:items-center gap-4">
+            <div className="flex-1">
+              <p className="text-gold font-bold text-sm flex items-center gap-2 mb-1">
+                <Clock className="w-4 h-4" />
+                Tienes una invitación pendiente
+              </p>
+              <p className="text-muted text-xs">
+                <strong>{team.captain.username}</strong> te ha invitado a unirte a <strong>{team.name}</strong>.
+                {myPending.message && <span className="block mt-1 italic">"{myPending.message}"</span>}
+              </p>
+            </div>
+            <div className="flex gap-2 shrink-0">
+              <PendingAction
+                memberId={myPending.id}
+                teamId={id}
+                action="ACTIVE"
+                icon={<CheckCircle className="w-4 h-4" />}
+                label="Aceptar"
+                variant="green"
+              />
+              <PendingAction
+                memberId={myPending.id}
+                teamId={id}
+                action="REJECTED"
+                icon={<XCircle className="w-4 h-4" />}
+                label="Rechazar"
+                variant="red"
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="grid gap-6 md:grid-cols-3">
         {/* Members */}
         <div className="md:col-span-2 space-y-6">
@@ -72,30 +112,49 @@ export default async function TeamPage({ params }: { params: Promise<{ id: strin
               <div className="space-y-2">
                 {activeMembers.map((m) => (
                   <div key={m.id} className="flex items-center justify-between py-2 px-3 rounded-lg hover:bg-background transition-colors">
-                    <div className="flex items-center gap-3">
-                      <div className="w-8 h-8 rounded-full bg-gold/20 flex items-center justify-center text-gold text-xs font-bold">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="w-8 h-8 rounded-full bg-gold/20 flex items-center justify-center text-gold text-xs font-bold shrink-0">
                         {m.user.username[0].toUpperCase()}
                       </div>
-                      <div>
-                        <span className="text-sm font-medium">{m.user.username}</span>
+                      <div className="min-w-0">
+                        <span className="text-sm font-medium truncate">{m.user.username}</span>
                         {m.user.id === team.captainId && (
                           <Badge variant="gold" className="ml-2 text-[10px]">Líder</Badge>
                         )}
                       </div>
                     </div>
+                    {canManage && m.user.id !== session.user.id && (
+                      <div className="flex gap-1.5 shrink-0">
+                        <MemberActionButton
+                          memberId={m.id}
+                          userId={m.user.id}
+                          teamId={id}
+                          action="promote"
+                          memberName={m.user.username}
+                        />
+                        <MemberActionButton
+                          memberId={m.id}
+                          userId={m.user.id}
+                          teamId={id}
+                          action="kick"
+                          memberName={m.user.username}
+                        />
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
             )}
           </Card>
 
-          {/* Pending applications */}
+          {/* Pending applications - captain view (info only, user must accept) */}
           {canManage && pendingMembers.length > 0 && (
             <Card>
               <h2 className="text-lg font-bold text-gold flex items-center gap-2 mb-4">
                 <Clock className="w-5 h-5" />
-                Solicitudes pendientes ({pendingMembers.length})
+                Invitaciones pendientes ({pendingMembers.length})
               </h2>
+              <p className="text-xs text-muted mb-3">Estos usuarios han recibido una invitación. Ellos deben aceptarla o rechazarla desde su cuenta.</p>
               <div className="space-y-2">
                 {pendingMembers.map((m) => (
                   <div key={m.id} className="flex items-center justify-between py-2 px-3 rounded-lg hover:bg-background transition-colors">
@@ -108,24 +167,7 @@ export default async function TeamPage({ params }: { params: Promise<{ id: strin
                         <p className="text-xs text-muted">{m.message || "Sin mensaje"}</p>
                       </div>
                     </div>
-                    <div className="flex gap-1.5">
-                      <PendingAction
-                        memberId={m.id}
-                        teamId={id}
-                        action="ACCEPT"
-                        icon={<CheckCircle className="w-4 h-4" />}
-                        label="Aceptar"
-                        variant="green"
-                      />
-                      <PendingAction
-                        memberId={m.id}
-                        teamId={id}
-                        action="REJECTED"
-                        icon={<XCircle className="w-4 h-4" />}
-                        label="Rechazar"
-                        variant="red"
-                      />
-                    </div>
+                    <RemoveMemberButton memberId={m.id} teamId={id} memberName={m.user.username} />
                   </div>
                 ))}
               </div>
@@ -166,102 +208,10 @@ export default async function TeamPage({ params }: { params: Promise<{ id: strin
           </Card>
 
           {isMember && !isCaptain && (
-            <form
-              onSubmit={async (e) => {
-                e.preventDefault();
-                if (confirm("¿Salir del equipo?")) {
-                  await fetch(`/api/teams/${id}/leave`, { method: "POST" });
-                  window.location.href = "/tournaments";
-                }
-              }}
-            >
-              <button type="submit" className="w-full py-2.5 text-sm text-red-400 border border-red-500/30 rounded-xl hover:bg-red-500/10 transition-colors">
-                Salir del equipo
-              </button>
-            </form>
-          )}
-
-          {isCaptain && activeMembers.length > 1 && (
-            <Card>
-              <h2 className="text-sm font-bold text-gold mb-3">Transferir capitanía</h2>
-              <CaptainTransfer
-                teamId={id}
-                members={activeMembers.filter((m) => m.user.id !== session.user.id).map((m) => ({ id: m.user.id, username: m.user.username }))}
-              />
-            </Card>
+            <LeaveTeamButton teamId={id} />
           )}
         </div>
       </div>
     </div>
-  );
-}
-
-function CaptainTransfer({ teamId, members }: { teamId: string; members: { id: string; username: string }[] }) {
-  return (
-    <div className="space-y-1">
-      {members.map((m) => (
-        <form
-          key={m.id}
-          onSubmit={async (e) => {
-            e.preventDefault();
-            if (confirm(`¿Transferir capitanía a ${m.username}?`)) {
-              await fetch(`/api/teams/${teamId}/captain`, {
-                method: "PATCH",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ newCaptainId: m.id }),
-              });
-              window.location.reload();
-            }
-          }}
-        >
-          <button type="submit" className="w-full text-left px-3 py-1.5 text-xs text-muted hover:text-foreground hover:bg-background rounded-lg transition-colors">
-            {m.username}
-          </button>
-        </form>
-      ))}
-    </div>
-  );
-}
-
-function PendingAction({
-  memberId,
-  teamId,
-  action,
-  icon,
-  label,
-  variant,
-}: {
-  memberId: string;
-  teamId: string;
-  action: string;
-  icon: React.ReactNode;
-  label: string;
-  variant: "green" | "red";
-}) {
-  return (
-    <form
-      action={`/api/teams/${teamId}/members/${memberId}`}
-      method="POST"
-      onSubmit={async (e) => {
-        e.preventDefault();
-        await fetch(`/api/teams/${teamId}/members/${memberId}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ status: action }),
-        });
-        window.location.reload();
-      }}
-    >
-      <button
-        type="submit"
-        className={`p-2 rounded-lg text-xs font-bold transition-colors ${
-          variant === "green"
-            ? "bg-green-500/10 text-green-400 hover:bg-green-500/20"
-            : "bg-red-500/10 text-red-400 hover:bg-red-500/20"
-        }`}
-      >
-        {icon}
-      </button>
-    </form>
   );
 }

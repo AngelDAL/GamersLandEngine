@@ -1,4 +1,4 @@
-import type { Role, Game, TournamentStatus, BracketType } from "@/generated/prisma";
+import type { Role, TournamentStatus, BracketType } from "@/generated/prisma";
 
 export type UserSession = {
   id: string;
@@ -25,7 +25,7 @@ export type BracketMatch = {
 };
 
 export type TournamentFilter = {
-  game?: Game;
+  game?: string;
   status?: TournamentStatus;
   search?: string;
 };

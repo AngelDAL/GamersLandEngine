@@ -5,6 +5,7 @@ import { useSession, signOut } from "next-auth/react";
 import Link from "next/link";
 import { Gamepad2, Trophy, Plus, LogOut, QrCode, Menu, X } from "lucide-react";
 import { QRDrawer } from "@/components/player/QRDrawer";
+import { NotificationBell } from "@/components/notifications/NotificationBell";
 
 export function Navbar() {
   const { data: session } = useSession();
@@ -66,6 +67,8 @@ export function Navbar() {
                   </span>
                   <span className="hidden sm:inline truncate max-w-[100px]">{session.user.name}</span>
                 </Link>
+
+                <NotificationBell />
 
                 {role === "PLAYER" && (
                   <button

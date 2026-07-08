@@ -30,8 +30,7 @@ export default async function PlayerPage({ params }: { params: Promise<{ id: str
               round: {
                 include: { tournament: { select: { id: true, name: true, game: true } } },
               },
-              team1: { select: { name: true } },
-              team2: { select: { name: true } },
+
             },
           },
         },
@@ -84,7 +83,7 @@ export default async function PlayerPage({ params }: { params: Promise<{ id: str
                 <div key={r.id} className="flex items-center justify-between py-2 border-b border-border last:border-0">
                   <div>
                     <p className="text-sm font-medium">{r.match.round.tournament.name}</p>
-                    <p className="text-xs text-muted">{r.match.team1?.name} vs {r.match.team2?.name}</p>
+                    <p className="text-xs text-muted">Partida #{r.match.bracketPosition !== null ? r.match.bracketPosition + 1 : "?"}</p>
                   </div>
                   <Badge variant={r.result === "WON" ? "green" : r.result === "LOST" ? "red" : "default"}>
                     {r.result}

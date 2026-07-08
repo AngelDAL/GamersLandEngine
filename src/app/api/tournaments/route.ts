@@ -44,11 +44,13 @@ export async function POST(req: Request) {
       maxTeams: data.maxTeams,
       minTeams: data.minTeams,
       isTeamBased: data.isTeamBased ?? true,
+      teamSize: data.teamSize ?? 5,
       bracketType: data.bracketType,
       eventDate: new Date(data.eventDate),
       registrationDeadline: data.registrationDeadline ? new Date(data.registrationDeadline) : null,
       location: data.location,
       rules: data.rules,
+      imageUrl: data.imageUrl || null,
       createdById: session.user.id,
     },
   });

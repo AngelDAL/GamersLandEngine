@@ -21,32 +21,47 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     return NextResponse.json({ error: "Torneo no encontrado" }, { status: 404 });
   }
 
+  const body = await req.json().catch(() => ({}));
+  const slotOrder: (string | null)[] | undefined = body.slotOrder;
+
   let contestants: { id: string; name: string }[];
 
   if (tournament.isTeamBased) {
-    // Team-based: use registered teams
     contestants = tournament.tournamentTeams.map((tt) => ({
       id: tt.team.id,
       name: tt.team.name,
     }));
+    if (contestants.length < 2) {
+      return NextResponse.json({ error: "Se necesitan al menos 2 equipos" }, { status: 400 });
+    }
   } else {
-    // Individual: use registered players directly (all statuses since they're all valid)
-    const registrations = await prisma.tournamentRegistration.findMany({
-      where: { tournamentId: id },
-      include: { user: { select: { id: true, username: true } } },
-    });
-    contestants = registrations.map((r) => ({
-      id: r.user.id,
-      name: r.user.username,
-    }));
-  }
-
-  if (contestants.length < 2) {
-    return NextResponse.json({
-      error: tournament.isTeamBased
-        ? "Se necesitan al menos 2 equipos"
-        : "Se necesitan al menos 2 jugadores",
-    }, { status: 400 });
+    if (slotOrder) {
+      // Use the custom slot order from the organizer
+      const registrations = await prisma.tournamentRegistration.findMany({
+        where: { tournamentId: id },
+        include: { user: { select: { id: true, username: true } } },
+      });
+      const userMap = new Map(registrations.map((r) => [r.user.id, r.user.username]));
+      const active = slotOrder.filter((id): id is string => id !== null);
+      if (active.length < 2) {
+        return NextResponse.json({ error: "Se necesitan al menos 2 jugadores asignados" }, { status: 400 });
+      }
+      // Build bracket manually from slot order
+      // We create contestants respecting the slot positions (null = BYE)
+      contestants = slotOrder.map((id) => ({
+        id: id || `__bye__${Math.random()}`,
+        name: id ? (userMap.get(id) || "Jugador") : "__BYE__",
+      }));
+    } else {
+      const registrations = await prisma.tournamentRegistration.findMany({
+        where: { tournamentId: id },
+        include: { user: { select: { id: true, username: true } } },
+      });
+      contestants = registrations.map((r) => ({ id: r.user.id, name: r.user.username }));
+      if (contestants.length < 2) {
+        return NextResponse.json({ error: "Se necesitan al menos 2 jugadores" }, { status: 400 });
+      }
+    }
   }
 
   // Delete existing rounds
@@ -54,17 +69,45 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
   let bracket: { round: number; position: number; team1Id: string | null; team2Id: string | null }[][];
 
-  switch (tournament.bracketType) {
-    case "DOUBLE_ELIMINATION": {
-      const { upper, final } = generateDoubleElimination(contestants);
-      bracket = [...upper, ...final];
-      break;
+  if (slotOrder && !tournament.isTeamBased) {
+    // Manual bracket from slot positions
+    const totalSlots = slotOrder.length;
+    const numRounds = Math.log2(totalSlots);
+
+    // Round 1: pair up slots
+    const round1: { round: number; position: number; team1Id: string | null; team2Id: string | null }[] = [];
+    for (let i = 0; i < totalSlots / 2; i++) {
+      round1.push({
+        round: 1,
+        position: i,
+        team1Id: contestants[i * 2]?.id?.startsWith("__bye__") ? null : contestants[i * 2]?.id || null,
+        team2Id: contestants[i * 2 + 1]?.id?.startsWith("__bye__") ? null : contestants[i * 2 + 1]?.id || null,
+      });
     }
-    case "ROUND_ROBIN":
-      bracket = generateRoundRobin(contestants);
-      break;
-    default:
-      bracket = generateSingleElimination(contestants);
+    bracket = [round1];
+
+    // Subsequent rounds: placeholders
+    for (let r = 2; r <= numRounds; r++) {
+      const matchCount = totalSlots / Math.pow(2, r);
+      const round: typeof round1 = [];
+      for (let i = 0; i < matchCount; i++) {
+        round.push({ round: r, position: i, team1Id: null, team2Id: null });
+      }
+      bracket.push(round);
+    }
+  } else {
+    switch (tournament.bracketType) {
+      case "DOUBLE_ELIMINATION": {
+        const { upper, final } = generateDoubleElimination(contestants);
+        bracket = [...upper, ...final];
+        break;
+      }
+      case "ROUND_ROBIN":
+        bracket = generateRoundRobin(contestants);
+        break;
+      default:
+        bracket = generateSingleElimination(contestants);
+    }
   }
 
   const createdRounds: any[] = [];

@@ -8,7 +8,7 @@ const adapter = new PrismaMariaDb({
   user: url.username,
   password: url.password,
   database: url.pathname.replace("/", ""),
-  connectionLimit: 5,
+  connectionLimit: 10,
 });
 
 const globalForPrisma = globalThis as unknown as { prisma: PrismaClient };
