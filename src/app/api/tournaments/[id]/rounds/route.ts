@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
 import { generateSingleElimination, generateDoubleElimination, generateRoundRobin } from "@/lib/bracket-engine";
+import { ensureRiotTournament } from "@/lib/riot-integration";
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const session = await auth();
@@ -20,6 +21,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   if (!tournament) {
     return NextResponse.json({ error: "Torneo no encontrado" }, { status: 404 });
   }
+
+  // Only auto-register with Riot for League of Legends tournaments. Other
+  // games don't have a Riot integration.
+  const isLeagueOfLegends = (tournament.game ?? "").toUpperCase() === "LEAGUE_OF_LEGENDS";
 
   const body = await req.json().catch(() => ({}));
   const slotOrder: (string | null)[] | undefined = body.slotOrder;
@@ -134,6 +139,20 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     where: { id },
     data: { status: "IN_PROGRESS" },
   });
+
+  // Auto-register with Riot so the tournament is ready to issue per-match codes.
+  // This is fire-and-forget: a Riot outage shouldn't block the bracket generation,
+  // but we log if something goes wrong so the organizer can re-try.
+  if (isLeagueOfLegends) {
+    try {
+      await ensureRiotTournament(id);
+    } catch (err) {
+      console.error(
+        `[RoundsRoute] Auto-registration with Riot failed for tournament ${id}:`,
+        err instanceof Error ? err.message : err,
+      );
+    }
+  }
 
   return NextResponse.json({ rounds: createdRounds }, { status: 201 });
 }

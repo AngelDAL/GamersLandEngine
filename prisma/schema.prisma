@@ -228,12 +228,18 @@ model Match {
   startedAt       DateTime?
   endedAt         DateTime?
   log             String?
+  /// Riot tournament code assigned to this match. Each match has its own
+  /// code that the participating team captains use in the LoL tournament client.
+  /// The Riot webhook at /api/riot/callback resolves codes back to matches.
+  riotCode        String?
 
   round  TournamentRound @relation(fields: [roundId], references: [id])
   winner Team?           @relation("MatchWinner", fields: [winnerId], references: [id])
 
   results     MatchResult[]
   teamResults TeamMatchResult[]
+
+  @@index([riotCode])
 }
 
 model MatchResult {

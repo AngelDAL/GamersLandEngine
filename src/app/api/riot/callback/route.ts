@@ -87,11 +87,11 @@ export async function POST(request: Request) {
       });
     }
 
-    // 4. Find the match associated with this tournament code
-    //    The match's `log` field is used as a convention to store the
-    //    Riot tournament code that was assigned when generating codes.
+    // 4. Find the match associated with this tournament code.
+    //    We look up via the dedicated `riotCode` field on Match for a clean
+    //    1:1 mapping between codes and matches.
     const match = await prisma.match.findFirst({
-      where: { log: tournamentCode },
+      where: { riotCode: tournamentCode },
       include: {
         round: {
           include: {
@@ -140,8 +140,8 @@ export async function POST(request: Request) {
         status: "COMPLETED",
         winnerId: winningTeamId,
         endedAt: now,
-        // Append the callback info to the log
-        log: `${match.log ?? ""}\n[callback ${now.toISOString()}] gameId=${gameId ?? "N/A"}, winner=${winningTeam ?? "N/A"}`,
+        // Append the callback info to the log (preserve the riot code)
+        log: `[callback ${now.toISOString()}] gameId=${gameId ?? "N/A"}, winner=${winningTeam ?? "N/A"}`,
       },
     });
 
