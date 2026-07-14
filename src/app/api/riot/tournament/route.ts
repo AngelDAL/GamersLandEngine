@@ -15,18 +15,14 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "No tienes permisos" }, { status: 403 });
     }
 
-    const { tournamentId, providerId, name } = await req.json();
+    const body = await req.json().catch(() => ({}));
+    const tournamentId: string | undefined = body?.tournamentId;
+    const explicitProviderId: number | undefined =
+      typeof body?.providerId === "number" ? body.providerId : undefined;
 
     if (!tournamentId || typeof tournamentId !== "string") {
       return NextResponse.json(
         { error: "tournamentId is required and must be a string" },
-        { status: 400 },
-      );
-    }
-
-    if (typeof providerId !== "number" || providerId <= 0) {
-      return NextResponse.json(
-        { error: "providerId is required and must be a positive number" },
         { status: 400 },
       );
     }
@@ -40,8 +36,17 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Tournament not found" }, { status: 404 });
     }
 
+    // Resolve provider: explicit > stored > error
+    let providerId = explicitProviderId ?? tournament.riotProviderId ?? null;
+    if (!providerId) {
+      return NextResponse.json(
+        { error: "Provider not registered. Call /api/riot/provider first." },
+        { status: 400 },
+      );
+    }
+
     // Create the Riot tournament
-    const tournamentName = name ?? tournament.name;
+    const tournamentName = body?.name ?? tournament.name;
     const riotTournamentId = await riotService.createTournament(
       providerId,
       tournamentName,
@@ -57,7 +62,7 @@ export async function POST(req: Request) {
     });
 
     return NextResponse.json(
-      { success: true, riotTournamentId },
+      { success: true, riotTournamentId, providerId },
       { status: 201 },
     );
   } catch (error) {

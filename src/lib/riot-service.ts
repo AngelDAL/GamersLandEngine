@@ -125,23 +125,6 @@ function riotHeaders(apiKey: string): Record<string, string> {
   };
 }
 
-/**
- * Determine the region routing key from a platform region string.
- * Maps common region codes to their Riot API routing value.
- * Falls back to "americas" for unknown regions.
- */
-function resolveRegionRouting(region: string): string {
-  const asia = ["kr", "jp", "sg2", "sg"];
-  const europe = ["euw1", "eune1", "tr1", "ru"];
-  const sea = ["oc1", "ph2", "tw2", "vn2", "th2"];
-
-  const normalized = region.toLowerCase();
-  if (asia.includes(normalized)) return "asia";
-  if (europe.includes(normalized)) return "europe";
-  if (sea.includes(normalized)) return "sea";
-  return "americas";
-}
-
 // ─── RiotService ─────────────────────────────────────────────────────────────
 
 /**
@@ -478,10 +461,17 @@ export class RiotApiError extends Error {
 
 /**
  * Default callback URL for use with `createProvider()`.
- * Configurable via the `RIOT_CALLBACK_URL` environment variable.
+ * Auto-built from NEXT_PUBLIC_APP_URL when RIOT_CALLBACK_URL is not set.
+ * Strips trailing slash and appends `/api/riot/callback`.
  */
-export const RIOT_CALLBACK_URL: string =
-  process.env.RIOT_CALLBACK_URL ?? "https://gamersland.test/callback";
+function buildDefaultCallbackUrl(): string {
+  const fromEnv = process.env.RIOT_CALLBACK_URL;
+  if (fromEnv && fromEnv.trim().length > 0) return fromEnv.trim();
+  const base = (process.env.NEXT_PUBLIC_APP_URL ?? "").replace(/\/+$/, "");
+  return base ? `${base}/api/riot/callback` : "https://gamersland.tabtap.dev/api/riot/callback";
+}
+
+export const RIOT_CALLBACK_URL: string = buildDefaultCallbackUrl();
 
 /**
  * Default singleton instance of the RiotService, initialised from environment

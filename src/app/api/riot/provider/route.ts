@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
-import { riotService } from "@/lib/riot-service";
+import { riotService, RIOT_CALLBACK_URL } from "@/lib/riot-service";
+
+const DEFAULT_REGION = "LAN";
 
 export async function POST(req: Request) {
   try {
@@ -14,21 +16,24 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "No tienes permisos" }, { status: 403 });
     }
 
-    const { region, callbackUrl } = await req.json();
-
-    if (!region || typeof region !== "string" || region.trim().length === 0) {
-      return NextResponse.json(
-        { error: "region is required and must be a non-empty string" },
-        { status: 400 },
-      );
+    // Optional body — server fills defaults if missing
+    let region: string = DEFAULT_REGION;
+    let callbackUrl: string = RIOT_CALLBACK_URL;
+    try {
+      const body = await req.json();
+      if (body && typeof body.region === "string" && body.region.trim()) {
+        region = body.region.trim().toUpperCase();
+      }
+      if (body && typeof body.callbackUrl === "string" && body.callbackUrl.trim()) {
+        callbackUrl = body.callbackUrl.trim();
+      }
+    } catch {
+      // empty body is fine — use defaults
     }
 
-    const providerId = await riotService.createProvider(
-      region.trim().toUpperCase(),
-      callbackUrl?.trim(),
-    );
+    const providerId = await riotService.createProvider(region, callbackUrl);
 
-    return NextResponse.json({ success: true, providerId }, { status: 201 });
+    return NextResponse.json({ success: true, providerId, region, callbackUrl }, { status: 201 });
   } catch (error) {
     const message =
       error instanceof Error ? error.message : "Unknown error creating provider";
