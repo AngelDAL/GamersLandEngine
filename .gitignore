@@ -41,3 +41,8 @@ yarn-error.log*
 next-env.d.ts
 
 /src/generated/prisma
+
+# Stress testing reports
+/stress-test/reports/
+/stress-test/*.json
+/stress-test/*.html

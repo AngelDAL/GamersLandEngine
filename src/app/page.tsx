@@ -6,6 +6,7 @@ import {
   Sword, Crosshair, Zap, Target, Clock,
 } from "lucide-react";
 import { MatchCountdown } from "@/components/notifications/MatchCountdown";
+import { TournamentCarousel } from "@/components/landing/TournamentCarousel";
 
 const gameConfig: Record<string, { icon: typeof Gamepad2; gradient: string; label: string }> = {
   LEAGUE_OF_LEGENDS: { icon: Sword, gradient: "from-blue-900/80 via-blue-800/40 to-transparent", label: "League of Legends" },
@@ -104,6 +105,9 @@ export default async function HomePage() {
       </div>
 
       <div className="max-w-7xl mx-auto px-4 py-8">
+        {/* ═══════ CARRUSEL CÓMO FUNCIONA ═══════ */}
+        <TournamentCarousel />
+
         {/* ═══════ MIS TORNEOS ═══════ */}
         {myTournaments.length > 0 && (
           <div className="mb-8 p-4 sm:p-6 bg-gold/[0.03] border border-gold/20 rounded-2xl">
