@@ -10,6 +10,7 @@ import { ConfirmRegistrationModal } from "@/components/shared/ConfirmRegistratio
 import { TeamDnD } from "@/components/tournament/TeamDnD";
 import { showToast, ToastContainer } from "@/components/shared/Toast";
 import { useSocket } from "@/hooks/useSocket";
+import { RiotCodePanel } from "./RiotCodePanel";
 import {
   Settings, Swords, Trophy, Users, UserPlus, Shield,
   ExternalLink, QrCode, Search, Check, X, Loader2,
@@ -59,7 +60,7 @@ export function ManageTournamentClient({ tournament, players, allPlayers, organi
   const isIndividual = tournament.isTeamBased === false;
   const membersInTeam = new Set(teams.flatMap((t: any) => t.members.map((m: any) => m.userId)));
   const router = useRouter();
-  const [tab, setTab] = useState<"alta" | "equipos" | "general" | "bracket" | "prizes" | "participants">("alta");
+  const [tab, setTab] = useState<"alta" | "equipos" | "general" | "bracket" | "prizes" | "participants" | "riot">("alta");
   const [loading, setLoading] = useState(false);
   const { socket } = useSocket();
 
@@ -319,6 +320,7 @@ export function ManageTournamentClient({ tournament, players, allPlayers, organi
     { id: "general" as const, label: "Estado", icon: Settings, desc: "Estado" },
     { id: "prizes" as const, label: "Premios", icon: Trophy, desc: "Premios" },
     { id: "participants" as const, label: "Participantes", icon: Users, desc: "Info" },
+    { id: "riot" as const, label: "Riot", icon: Shield, desc: "Integración" },
   ].filter(Boolean);
 
   return (
@@ -738,6 +740,22 @@ export function ManageTournamentClient({ tournament, players, allPlayers, organi
             </Card>
           </div>
         </div>
+      )}
+
+      {/* ═══════ RIOT INTEGRATION ═══════ */}
+      {tab === "riot" && (
+        <RiotCodePanel
+          tournament={{
+            id: tournament.id,
+            name: tournament.name,
+            game: tournament.game,
+            riotProviderId: (tournament as any).riotProviderId ?? null,
+            riotTournamentId: (tournament as any).riotTournamentId ?? null,
+            riotMode: (tournament as any).riotMode ?? null,
+            teamSize: tournament.teamSize ?? 5,
+          }}
+          isAdmin={isAdmin}
+        />
       )}
 
       {/* QR Scanner */}

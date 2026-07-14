@@ -121,7 +121,7 @@ export function RiotCodePanel({ tournament }: Props) {
   const registerProvider = async () => {
     setProviderLoading(true);
     try {
-      const res = await fetch(`/api/tournaments/${tournament.id}/riot/provider`, {
+      const res = await fetch(`/api/riot/provider`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -149,9 +149,13 @@ export function RiotCodePanel({ tournament }: Props) {
   const registerTournament = async () => {
     setTournamentLoading(true);
     try {
-      const res = await fetch(`/api/tournaments/${tournament.id}/riot/tournament`, {
+      const res = await fetch(`/api/riot/tournament`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          tournamentId: tournament.id,
+          providerId: tournament.riotProviderId,
+        }),
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
@@ -173,15 +177,18 @@ export function RiotCodePanel({ tournament }: Props) {
     setCodesLoading(true);
     setGeneratedCodes([]);
     try {
-      const res = await fetch(`/api/tournaments/${tournament.id}/riot/codes`, {
+      const res = await fetch(`/api/riot/codes`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          tournamentId: tournament.id,
           count: codesCount,
-          mapType,
-          pickType,
-          spectatorType,
-          teamSize,
+          config: {
+            mapType,
+            pickType,
+            spectatorType,
+            teamSize,
+          },
         }),
       });
       if (!res.ok) {
@@ -189,8 +196,8 @@ export function RiotCodePanel({ tournament }: Props) {
         throw new Error(data.error || "Error al generar códigos en Riot");
       }
       const data = await res.json();
-      const codes = data.codes || data || [];
-      setGeneratedCodes(Array.isArray(codes) ? codes : []);
+      const codes = data.codes || [];
+      setGeneratedCodes(Array.isArray(codes) ? codes.map((c: string, i: number) => ({ code: c, lobbyId: "", id: i })) : []);
       showToast(
         `${Array.isArray(codes) ? codes.length : 1} código(s) generado(s)`,
         "success"
