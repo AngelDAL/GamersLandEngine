@@ -133,7 +133,7 @@ model Tournament {
   id                   String           @id @default(uuid())
   name                 String
   game                 String
-  description          String?
+  description          String?          @db.Text
   entryFee             Decimal?         @default(0)
   maxTeams             Int
   minTeams             Int              @default(4)
@@ -144,10 +144,13 @@ model Tournament {
   eventDate            DateTime
   registrationDeadline DateTime?
   location             String?
-  rules                String?
-  imageUrl             String?
+  rules                String?          @db.Text
+  imageUrl             String?          @db.Text
   createdAt            DateTime         @default(now())
   createdById          String
+  riotProviderId       Int?
+  riotTournamentId     Int?
+  riotMode             String?            @default("stub")
 
   createdBy      User                    @relation("TournamentCreator", fields: [createdById], references: [id])
   organizers     TournamentOrganizer[]
