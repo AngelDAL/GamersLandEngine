@@ -4,7 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { generateMatchCode } from "@/lib/riot-integration";
 
 /**
- * GET /api/matches/[id]/code
+ * GET /api/matches/[matchId]/code
  *
  * Returns the Riot tournament code for a specific match.
  *
@@ -18,9 +18,9 @@ import { generateMatchCode } from "@/lib/riot-integration";
  */
 export async function GET(
   _req: Request,
-  { params }: { params: Promise<{ id: string }> },
+  { params }: { params: Promise<{ matchId: string }> },
 ) {
-  const { id: matchId } = await params;
+  const { matchId } = await params;
   const session = await auth();
   if (!session?.user) {
     return NextResponse.json({ error: "No autorizado" }, { status: 401 });
