@@ -91,6 +91,16 @@ model User {
   avatarUrl      String?
   createdAt      DateTime @default(now())
 
+  riotGameName           String?   // "Quieto"
+  riotTagLine            String?   // "Compadre"
+  riotRegion             String?   // platform code, e.g. "la1"
+  riotPuuid              String?   @unique
+  riotSummonerId         String?
+  riotIconId             Int?      // profile icon id
+  riotLinkedAt           DateTime?
+  riotProfileRefreshedAt DateTime?
+  riotSkinSeed           Int?      // sticky random seed for splash art
+
   memberships              TeamMember[]
   registrations            TournamentRegistration[]
   createdTournaments       Tournament[]             @relation("TournamentCreator")
@@ -102,6 +112,61 @@ model User {
   sponsorPrizes            Prize[]                  @relation("SponsorPrizes")
   clerkClaims              PrizeClaim[]             @relation("ClerkClaims")
   notifications            Notification[]
+  playerMatchHistory     PlayerMatchHistory[]
+}
+
+model RiotCache {
+  key       String   @id
+  value     String   @db.LongText
+  expiresAt DateTime
+  updatedAt DateTime @updatedAt
+
+  @@index([expiresAt])
+}
+
+model PlayerMatchHistory {
+  id                  String    @id @default(cuid())
+
+  userId              String?
+  user                User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  matchId             String
+  gameName            String?
+  tagLine             String?
+  region              String
+
+  queueId             Int
+  queueName           String
+  gameMode            String
+  gameStartTimestamp  DateTime
+  gameDurationMin     Int
+
+  championId          Int
+  championName        String
+  role                String?
+  win                 Boolean
+  kills               Int
+  deaths              Int
+  assists             Int
+  cs                  Int
+  csPerMin            Float
+  itemIds             String    @db.LongText
+  summoner1Perk       Int?
+  summoner2Perk       Int?
+
+  isTournament        Boolean   @default(false)
+  tournamentId        String?
+  matchGamersLandId   String?
+  tournament          Tournament? @relation(fields: [tournamentId], references: [id], onDelete: SetNull)
+  matchGamersLand     Match?      @relation(fields: [matchGamersLandId], references: [id], onDelete: SetNull)
+
+  createdAt           DateTime  @default(now())
+
+  @@unique([userId, matchId])
+  @@index([userId, gameStartTimestamp(sort: Desc)])
+  @@index([tournamentId])
+  @@index([matchId])
+  @@index([isTournament, gameStartTimestamp(sort: Desc)])
 }
 
 model Team {
@@ -161,6 +226,7 @@ model Tournament {
   rounds         TournamentRound[]
   prizes         Prize[]
   tournamentTeams TournamentTeam[]
+  playerMatchHistory PlayerMatchHistory[]
 }
 
 model TournamentOrganizer {
@@ -238,6 +304,7 @@ model Match {
 
   results     MatchResult[]
   teamResults TeamMatchResult[]
+  playerMatchHistory PlayerMatchHistory[]
 
   @@index([riotCode])
 }
