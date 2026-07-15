@@ -500,3 +500,60 @@ export const riotService: RiotService = (() => {
 
   return new RiotService(apiKey, validatedMode);
 })();
+
+// ─── Region mapping (Account-v1, Summoner-v4, League-v4, Mastery-v4) ─────────
+
+/**
+ * Riot platform/region codes used for endpoints that take a regional routing value
+ * (e.g. /lol/summoner/v4/summoners/by-puuid/{puuid}, /lol/league/v4/entries/...).
+ * LAN = Latin America North (Mexico, Central America, etc.).
+ */
+export type RiotRegion =
+  | "br1"   // Brazil
+  | "eun1"  // EU Nordic & East
+  | "euw1"  // EU West
+  | "jp1"   // Japan
+  | "kr"    // Korea
+  | "la1"   // Latin America North
+  | "la2"   // Latin America South
+  | "na1"   // North America
+  | "oc1"   // Oceania
+  | "tr1"   // Turkey
+  | "ru"    // Russia
+  | "ph2"   // Philippines
+  | "sg2"   // Singapore
+  | "th2"   // Thailand
+  | "tw2"   // Taiwan
+  | "vn2";  // Vietnam
+
+export const ALL_REGIONS: RiotRegion[] = [
+  "br1", "eun1", "euw1", "jp1", "kr", "la1", "la2", "na1",
+  "oc1", "tr1", "ru", "ph2", "sg2", "th2", "tw2", "vn2",
+];
+
+/**
+ * Map from Account-v1 regional group to the platform values that share the
+ * same match-v5 cluster. Account-v1 is queried on the regional cluster
+ * (americas/asia/europe), while Summoner/League/Mastery are queried on
+ * the platform value.
+ */
+const REGION_TO_REGIONAL: Record<RiotRegion, "americas" | "asia" | "europe"> = {
+  br1: "americas", la1: "americas", la2: "americas", na1: "americas",
+  jp1: "asia", kr: "asia", oc1: "asia", ph2: "asia", sg2: "asia", th2: "asia", tw2: "asia", vn2: "asia",
+  eun1: "europe",euw1: "europe", tr1: "europe", ru: "europe",
+};
+
+export function getRegionalCluster(region: RiotRegion): "americas" | "asia" | "europe" {
+  return REGION_TO_REGIONAL[region];
+}
+
+/**
+ * Internal shared fetch helper used by the Account/Summoner/League/Match services.
+ * Reads RIOT_API_KEY lazily and never throws on missing key (callers can
+ * detect with .ok === false).
+ */
+export const RIOT_API_KEY_HELPER = {
+  get(): string | null {
+    return process.env.RIOT_API_KEY ?? null;
+  },
+};

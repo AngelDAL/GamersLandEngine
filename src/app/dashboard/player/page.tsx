@@ -6,6 +6,7 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { AvatarUpload } from "@/components/player/AvatarUpload";
 import { NotificationListener } from "@/components/player/NotificationListener";
+import { LoLLinkCard } from "@/components/player/LoLLinkCard";
 import { PlayerDashboardClient } from "./PlayerDashboardClient";
 import { Trophy, Swords, Users, Gamepad2, Calendar } from "lucide-react";
 
@@ -15,8 +16,23 @@ export default async function PlayerDashboard() {
 
   const user = await prisma.user.findUnique({
     where: { id: session.user.id },
-    select: { id: true, username: true, avatarUrl: true },
+    select: {
+      id: true, username: true, avatarUrl: true,
+      riotGameName: true, riotTagLine: true, riotRegion: true,
+    },
   });
+
+  // We need summonerLevel too — query the DB cache if available
+  const cachedProfile = await prisma.riotCache.findUnique({
+    where: { key: `profile:${session.user.id}:lol:v3` },
+  });
+  let summonerLevel: number | null = null;
+  if (cachedProfile) {
+    try {
+      const parsed = JSON.parse(cachedProfile.value);
+      summonerLevel = parsed?.summonerLevel ?? null;
+    } catch {}
+  }
 
   const [registrations, memberships, matchResults, claimedCount] = await Promise.all([
     prisma.tournamentRegistration.findMany({
@@ -155,6 +171,15 @@ export default async function PlayerDashboard() {
 
         {/* Sidebar */}
         <div className="space-y-6">
+          {/* LoL Link */}
+          <LoLLinkCard
+            initialLinked={Boolean(user?.riotGameName && user?.riotTagLine)}
+            initialRiotId={user?.riotGameName && user?.riotTagLine ? `${user.riotGameName}#${user.riotTagLine}` : null}
+            initialRegion={user?.riotRegion ?? null}
+            initialLevel={summonerLevel}
+            lastRefreshedAt={null}
+          />
+
           {/* Teams */}
           <Card className="p-5">
             <h2 className="text-lg font-bold text-gold flex items-center gap-2 mb-4">

@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { TeamMatchResultEnum } from "@/generated/prisma/enums";
+import { riotDataService, type MatchParticipant } from "@/lib/riot-data";
+import { recordPlayerMatch } from "@/lib/riot-profile";
+import type { RiotRegion } from "@/lib/riot-service";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -180,10 +183,89 @@ export async function POST(request: Request) {
         `${teamResults.length} team result(s) recorded`,
     );
 
+    // 7. Persist per-player LoL history to PlayerMatchHistory.
+    //    This is best-effort: we never fail the callback for this.
+    //    Only run for LoL tournaments (filter at the source).
+    const tournament = match.round.tournament;
+    const tournamentGame = await prisma.tournament
+      .findUnique({ where: { id: tournament.id }, select: { game: true, region: true } });
+    const isLOL = (tournamentGame?.game ?? "").toUpperCase() === "LEAGUE_OF_LEGENDS";
+    let playersRecorded = 0;
+    if (isLOL && tournamentGame?.region) {
+      try {
+        const region = tournamentGame.region as RiotRegion;
+        // Prefer the gameId Riot gave us (numeric → convert to match-v5 id). If absent, fall
+        // back to deriving from tournamentCode: in stub mode, the gameId IS the match id.
+        const matchId = String(gameId ?? tournamentCode);
+        const detail = await riotDataService.getMatch(matchId, region);
+        if (detail) {
+          // Resolve all linked users for this match by PUUID
+          const puuids = detail.participants.map((p) => p.puuid).filter(Boolean);
+          const linkedUsers = await prisma.user.findMany({
+            where: { riotPuuid: { in: puuids } },
+            select: { id: true, riotPuuid: true, riotGameName: true, riotTagLine: true },
+          });
+          const userByPuuid = new Map(
+            linkedUsers
+              .filter((u) => u.riotPuuid)
+              .map((u) => [u.riotPuuid as string, u]),
+          );
+          for (const participant of detail.participants as MatchParticipant[]) {
+            const u = userByPuuid.get(participant.puuid);
+            if (!u) continue; // not linked → skip, but don't fail
+            const cs = (participant.totalMinionsKilled ?? 0) + (participant.neutralMinionsKilled ?? 0);
+            await recordPlayerMatch({
+              userId: u.id,
+              matchId,
+              region,
+              queueId: detail.queueId,
+              gameMode: detail.gameMode,
+              gameStartTimestamp: new Date(detail.gameStartTimestamp),
+              gameDurationMin: Math.round(detail.gameDuration / 60),
+              championId: participant.championId,
+              win: !!participant.win,
+              kills: participant.kills,
+              deaths: participant.deaths,
+              assists: participant.assists,
+              cs,
+              itemIds: [
+                participant.item0, participant.item1, participant.item2,
+                participant.item3, participant.item4, participant.item5, participant.item6,
+              ],
+              summoner1Perk: participant.summoner1Id,
+              summoner2Perk: participant.summoner2Id,
+              isTournament: true,
+              tournamentId: tournament.id,
+              matchGamersLandId: match.id,
+              gameName: u.riotGameName,
+              tagLine: u.riotTagLine,
+              role: participant.teamPosition,
+            });
+            playersRecorded++;
+          }
+          console.log(
+            `[RiotCallback] Recorded ${playersRecorded}/${detail.participants.length} ` +
+            `PlayerMatchHistory rows for match ${match.id} (region=${region})`,
+          );
+        } else {
+          console.warn(
+            `[RiotCallback] Match-v5 detail not available for matchId=${matchId} ` +
+            `— PlayerMatchHistory skipped (run a manual refresh later to backfill).`,
+          );
+        }
+      } catch (err) {
+        console.warn(
+          `[RiotCallback] PlayerMatchHistory persist failed (non-fatal):`,
+          err,
+        );
+      }
+    }
+
     return NextResponse.json({
       success: true,
       processed: true,
       matchId: match.id,
+      playersRecorded,
     });
   } catch (error) {
     console.error(`[RiotCallback] Error processing callback:`, error);

@@ -201,6 +201,9 @@ model Tournament {
   id                   String           @id @default(uuid())
   name                 String
   game                 String
+  /// Riot platform code (la1, na1, euw1, etc.) — the region this tournament's
+  /// Riot matches are played in. Null for non-Riot games.
+  region               String?
   description          String?          @db.Text
   entryFee             Decimal?         @default(0)
   maxTeams             Int

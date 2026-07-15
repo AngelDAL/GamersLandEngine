@@ -1,13 +1,10 @@
 import { prisma } from "@/lib/prisma";
-import { auth } from "@/lib/auth";
-import { notFound, redirect } from "next/navigation";
+import { notFound } from "next/navigation";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { LoLProfileSection } from "@/components/player/LoLProfileSection";
 
 export default async function PlayerPage({ params }: { params: Promise<{ id: string }> }) {
-  const session = await auth();
-  if (!session) redirect("/auth/login");
-
   const { id } = await params;
   const user = await prisma.user.findUnique({
     where: { id },
@@ -111,6 +108,12 @@ export default async function PlayerPage({ params }: { params: Promise<{ id: str
             </div>
           )}
         </Card>
+      </div>
+
+      {/* LoL Profile — public, server-rendered, DB-backed. Zero Riot calls on page load. */}
+      <div className="mt-8">
+        <h2 className="text-xl font-bold text-gold mb-4">Perfil de League of Legends</h2>
+        <LoLProfileSection userId={user.id} username={user.username} />
       </div>
     </div>
   );
