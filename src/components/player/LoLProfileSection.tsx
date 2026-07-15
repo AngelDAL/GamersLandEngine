@@ -17,7 +17,7 @@
 import { prisma } from "@/lib/prisma";
 import { loadLoLProfile, type LoLProfileData } from "@/lib/riot-profile";
 import { Card } from "@/components/ui/card";
-import { Trophy, Target, Swords, Crown, Award, Gift, Coins, Clock } from "lucide-react";
+import { Trophy, Target, Swords, Crown, Award, Coins, Clock } from "lucide-react";
 import Link from "next/link";
 
 type Props = {
@@ -140,11 +140,13 @@ export async function LoLProfileSection({ userId, username, splashSkinName }: Pr
                 </p>
               </div>
             </div>
-            {splashSkinName && profile.topChampions[0] && (
+            {profile.topChampions[0] && (
               <div className="text-right shrink-0">
                 <p className="text-[10px] text-white/70 uppercase tracking-wider">Main</p>
                 <p className="text-sm font-bold text-gold">{profile.topChampions[0].name}</p>
-                <p className="text-[10px] text-white/60">{splashSkinName}</p>
+                {splashSkinName && splashSkinName !== profile.topChampions[0].name && (
+                  <p className="text-[10px] text-white/60">{splashSkinName}</p>
+                )}
               </div>
             )}
           </div>
@@ -211,20 +213,7 @@ export async function LoLProfileSection({ userId, username, splashSkinName }: Pr
                       <div className="w-8 h-8 rounded bg-surface shrink-0" />
                     )}
                     <div className="flex-1 min-w-0 space-y-1">
-                      <div className="flex items-center justify-between gap-2">
-                        <p className="text-sm font-medium truncate">{c.name}</p>
-                        <span
-                          className={`shrink-0 inline-flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded ${
-                            c.chestGranted
-                              ? "bg-emerald-500/15 text-emerald-300 border border-emerald-500/20"
-                              : "bg-amber-500/15 text-amber-300 border border-amber-500/20"
-                          }`}
-                          title={c.chestGranted ? "Cofre ya obtenido esta temporada" : "Cofre aún no obtenido"}
-                        >
-                          <Gift className="w-3 h-3" />
-                          {c.chestGranted ? "Cofre ✓" : "Sin cofre"}
-                        </span>
-                      </div>
+                      <p className="text-sm font-medium truncate">{c.name}</p>
                       <p className="text-[10px] text-muted">
                         Nivel {c.level} · {c.points.toLocaleString()} pts
                         {c.tokensEarned > 0 && (

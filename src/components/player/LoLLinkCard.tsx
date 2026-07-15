@@ -5,14 +5,13 @@
  *
  * Estados:
  *   - Sin vincular: form con inputs Riot ID + región
- *   - Vinculado: muestra Riot ID, nivel, "Desvincular" + "Refrescar" (con cooldown)
- *
- * El "Refrescar" usa POST /api/profile/riot-refresh que respeta un cooldown de 5 min.
+ *   - Vinculado: muestra Riot ID, nivel y enlace "Ver perfil de LoL" a /players/[userId]
  */
 import { useState, useTransition, useEffect } from "react";
+import Link from "next/link";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { RefreshCw, Unlink, Link2, AlertTriangle, Check, Loader2, Copy, Share2, X } from "lucide-react";
+import { Link2, AlertTriangle, Check, Loader2, Copy, Share2, X, ExternalLink } from "lucide-react";
 import { useRouter } from "next/navigation";
 
 type Props = {
@@ -44,7 +43,6 @@ export function LoLLinkCard(props: Props) {
   const [shareUrl, setShareUrl] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [isPending, startTransition] = useTransition();
-  const [cooldownLeft, setCooldownLeft] = useState(0);
 
   // Auto-dismiss share toast after 15s
   useEffect(() => {
@@ -52,11 +50,6 @@ export function LoLLinkCard(props: Props) {
     const t = setTimeout(() => setShareUrl(null), 15000);
     return () => clearTimeout(t);
   }, [shareUrl]);
-
-  // Tick cooldown countdown
-  if (cooldownLeft > 0) {
-    setTimeout(() => setCooldownLeft((s) => Math.max(0, s - 1)), 1000);
-  }
 
   function onLink() {
     setErr(null); setOkMsg(null);
@@ -76,42 +69,6 @@ export function LoLLinkCard(props: Props) {
       setOkMsg(`Vinculado: ${data.profile.gameName}#${data.profile.tagLine}`);
       setShareUrl(`${window.location.origin}/players/${userId}`);
       setCopied(false);
-      router.refresh();
-    });
-  }
-
-  function onUnlink() {
-    setErr(null); setOkMsg(null);
-    if (!confirm("¿Desvincular tu Riot ID? Tu historial de partidas se preserva.")) return;
-    startTransition(async () => {
-      const res = await fetch("/api/profile/riot-link", { method: "DELETE" });
-      const data = await res.json();
-      if (!res.ok) {
-        setErr(data.error ?? "Error al desvincular.");
-        return;
-      }
-      setLinked(false);
-      setLevel(null);
-      setOkMsg("Desvinculado. Tu historial sigue guardado.");
-      router.refresh();
-    });
-  }
-
-  function onRefresh() {
-    setErr(null); setOkMsg(null);
-    startTransition(async () => {
-      const res = await fetch("/api/profile/riot-refresh", { method: "POST" });
-      const data = await res.json();
-      if (res.status === 429) {
-        setCooldownLeft(data.cooldownSecondsLeft ?? 300);
-        setErr(`Cooldown activo (${Math.ceil((data.cooldownSecondsLeft ?? 0) / 60)} min).`);
-        return;
-      }
-      if (!res.ok) {
-        setErr(data.error ?? "Error al refrescar.");
-        return;
-      }
-      setOkMsg("Perfil refrescado.");
       router.refresh();
     });
   }
@@ -233,22 +190,13 @@ export function LoLLinkCard(props: Props) {
             </div>
             <span className="w-2 h-2 rounded-full bg-green-400" />
           </div>
-          <div className="flex gap-2">
-            <Button onClick={onRefresh} disabled={isPending || cooldownLeft > 0} size="sm" variant="outline" className="flex-1">
-              {isPending ? (
-                <Loader2 className="w-3 h-3 animate-spin" />
-              ) : (
-                <RefreshCw className="w-3 h-3 mr-1" />
-              )}
-              {cooldownLeft > 0 ? `Espera ${cooldownLeft}s` : "Refrescar"}
-            </Button>
-            <Button onClick={onUnlink} disabled={isPending} size="sm" variant="ghost" className="flex-1 text-red-400 hover:bg-red-500/10">
-              <Unlink className="w-3 h-3 mr-1" /> Desvincular
-            </Button>
-          </div>
-          <p className="text-[10px] text-muted">
-            Refrescar: máx 12 veces/hora (cooldown 5 min). Tu historial se queda guardado.
-          </p>
+          <Link
+            href={`/players/${userId}`}
+            className="inline-flex w-full items-center justify-center gap-1.5 rounded bg-gold text-background hover:bg-gold-hover font-bold px-3 py-1.5 text-sm transition-colors"
+          >
+            <ExternalLink className="w-3 h-3" />
+            Ver perfil de LoL
+          </Link>
         </div>
       )}
     </Card>

@@ -21,41 +21,40 @@ export function Navbar() {
 
   return (
     <>
-      <nav className="bg-[#0A0E1A] border-b border-[#1E2A45] px-3 sm:px-6 py-2.5 sm:py-3">
-        <div className="max-w-7xl mx-auto flex items-center justify-between">
+      <nav className="bg-[#0A0E1A] border-b border-[#1E2A45] px-4 sm:px-6 py-3">
+        <div className="max-w-7xl mx-auto flex items-center justify-between gap-4">
           {/* Left side: Logo + Desktop links */}
-          <div className="flex items-center gap-4 sm:gap-8 min-w-0">
-            <Link href="/" className="flex items-center gap-1.5 sm:gap-2 text-[#C8AA6E] font-bold shrink-0">
+          <div className="flex items-center gap-6 md:gap-8 min-w-0">
+            <Link href="/" className="flex items-center gap-2 text-[#C8AA6E] font-bold shrink-0">
               <Gamepad2 className="w-5 h-5 sm:w-6 sm:h-6" />
-              <span className="text-sm sm:text-xl tracking-wider">GAMERSLAND</span>
+              <span className="text-base sm:text-xl tracking-wider">GAMERSLAND</span>
             </Link>
 
             {/* Desktop nav */}
-            <div className="hidden md:flex items-center gap-4 lg:gap-5 text-sm text-[#7B8FA1]">
+            <div className="hidden md:flex items-center gap-4 md:gap-6 lg:gap-8 text-sm md:text-base text-[#7B8FA1]">
               <Link href="/tournaments" className="hover:text-[#C8AA6E] transition-colors whitespace-nowrap">
                 Torneos
               </Link>
               {role === "PLAYER" && (
-                <Link href="/prizes" className="hover:text-[#C8AA6E] transition-colors flex items-center gap-1 whitespace-nowrap">
-                  <Trophy className="w-3.5 h-3.5" />
+                <Link href="/prizes" className="hover:text-[#C8AA6E] transition-colors flex items-center gap-1.5 whitespace-nowrap">
+                  <Trophy className="w-4 h-4" />
                   Premios
                 </Link>
               )}
               {(role === "ADMIN" || role === "ORGANIZER") && (
                 <Link
                   href="/tournaments/create"
-                  className="flex items-center gap-1 px-2.5 py-1.5 bg-gold/10 border border-gold/30 text-gold rounded-lg hover:bg-gold/20 transition-colors text-xs lg:text-sm whitespace-nowrap"
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-gold/10 border border-gold/30 text-gold rounded-lg hover:bg-gold/20 transition-colors whitespace-nowrap"
                 >
-                  <Plus className="w-3.5 h-3.5" />
-                  <span className="hidden lg:inline">Crear Torneo</span>
-                  <span className="lg:hidden">Nuevo</span>
+                  <Plus className="w-4 h-4" />
+                  <span>Crear Torneo</span>
                 </Link>
               )}
             </div>
           </div>
 
           {/* Right side */}
-          <div className="flex items-center gap-2 sm:gap-4">
+          <div className="flex items-center gap-3 sm:gap-4 shrink-0">
             {session ? (
               <>
                 <Link

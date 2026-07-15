@@ -3,6 +3,7 @@ import { Inter } from "next/font/google";
 import "./globals.css";
 import { Providers } from "@/components/layout/Providers";
 import { Navbar } from "@/components/layout/Navbar";
+import { MobileBottomTabs } from "@/components/layout/MobileBottomTabs";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -22,7 +23,9 @@ export default function RootLayout({
       <body className="min-h-full flex flex-col bg-background text-foreground">
         <Providers>
           <Navbar />
-          <main className="flex-1">{children}</main>
+          {/* Mobile-only bottom tab bar (hidden on md+). Adds ~64px of safe-area-aware bottom padding so content isn't hidden behind it. */}
+          <main className="flex-1 pb-16 md:pb-0">{children}</main>
+          <MobileBottomTabs />
         </Providers>
       </body>
     </html>

@@ -5,7 +5,7 @@ import { Eye } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { LoLProfileSection } from "@/components/player/LoLProfileSection";
-import { loadLoLProfile, getRandomSplashForTopChampion } from "@/lib/riot-profile";
+import { loadLoLProfile } from "@/lib/riot-profile";
 
 export default async function PlayerPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -67,23 +67,27 @@ export default async function PlayerPage({ params }: { params: Promise<{ id: str
 
   // Resolve the splash art for the user's top mastery champion so we can
   // use it as a full-page background. Mirrors the previous hero-card
-  // behavior but exposes the art to the entire page instead of just the
-  // LoL card. The LoL section reads the same DB-cached profile (zero extra
-  // Riot calls) and only needs the skin name for the "Main" label.
-  let splashUrl: string | undefined;
+  // We still load the LoL profile to know the top champion and skin name
+  // (for the "Main" label and the gradient accent on the background). The
+  // page-level splash art itself is currently disabled because DDragon is
+  // returning HTTP 403 "AccessDenied" for ALL splash art images across
+  // every CDN version (verified 2026-07-15 from both curl and a real
+  // browser). Once DDragon reopens the asset, the splash layer below can
+  // be re-enabled by re-introducing a `splashUrl` value here.
+  let splashUrl: string | undefined = undefined;
   let splashSkinName: string | undefined;
   if (user.riotPuuid) {
     const lolProfile = await loadLoLProfile(user.id);
     const top = lolProfile?.topChampions?.[0];
     if (top) {
-      const splash = await getRandomSplashForTopChampion(
-        top.championId,
-        user.riotSkinSeed ?? 0,
-      );
-      if (splash) {
-        splashUrl = splash.url;
-        splashSkinName = splash.skinName;
-      }
+      // The "Main" card shows the champion name. We don't have a skin
+      // name at this layer (TopChampionSummary doesn't carry it), so we
+      // only pass splashSkinName if/when the cache includes a skin name.
+      splashSkinName = top.name;
+      // Intentionally do NOT call getRandomSplashForTopChampion here:
+      // every call would hit DDragon and 403, wasting 200-500ms per page
+      // view. The page-level splash layer is disabled (see below); only
+      // the gold/dark gradient and bottom fade render.
     }
   }
 
@@ -94,23 +98,36 @@ export default async function PlayerPage({ params }: { params: Promise<{ id: str
           text legible regardless of the splash's brightness. We only
           render this when the user has a top champion with a resolvable
           splash — otherwise the page falls back to the default surface. */}
+      {/*
+        Background layers (splash + gold accent + bottom fade).
+        NOTE: As of 2026-07, DDragon is returning HTTP 403 ("AccessDenied")
+        for ALL splash art images (TwistedFate_*.jpg, Ahri_*.jpg, etc.) at
+        every CDN version we tested, even from real browsers. The splashUrl
+        is therefore likely unreachable at render time. We still emit the
+        layer so that if/when DDragon reopens the asset we render the
+        ambient background; the `onerror` flips the div to `hidden` so a
+        broken icon never shows. Below the splash, a gold/dark gradient
+        overlay + bottom fade are ALWAYS rendered — they carry the visual
+        weight of the background regardless of splash availability.
+      */}
       {splashUrl ? (
-        <>
-          {/* Static splash at ~20% opacity, behind everything. A bottom
-              gradient fades the art into the page surface so the lower
-              edge is smooth and the art sits as a soft ambient
-              background, not a foreground feature. */}
-          <div
-            aria-hidden="true"
-            className="fixed inset-0 -z-10 bg-cover bg-center bg-no-repeat"
-            style={{ backgroundImage: `url(${splashUrl})`, opacity: 0.2 }}
-          />
-          <div
-            aria-hidden="true"
-            className="fixed inset-x-0 bottom-0 h-1/3 -z-10 bg-gradient-to-b from-transparent to-background"
-          />
-        </>
+        <div
+          aria-hidden="true"
+          className="fixed inset-0 -z-10 bg-cover bg-center bg-no-repeat"
+          style={{ backgroundImage: `url(${splashUrl})`, opacity: 0.25 }}
+        />
       ) : null}
+      {/* Subtle colored gradient overlay: adds a tonal accent (brand gold
+          mixed with the dark background). Always rendered — it carries the
+          visual weight of the background. */}
+      <div
+        aria-hidden="true"
+        className="fixed inset-0 -z-10 bg-gradient-to-br from-[#0A0E1A]/0 via-[#C8AA6E]/5 to-[#0A0E1A]/30 pointer-events-none"
+      />
+      <div
+        aria-hidden="true"
+        className="fixed inset-x-0 bottom-0 h-2/5 -z-10 bg-gradient-to-b from-transparent via-background/40 to-background pointer-events-none"
+      />
 
       <div className="max-w-4xl mx-auto px-4 py-8">
       {!canSeePrivate && (
