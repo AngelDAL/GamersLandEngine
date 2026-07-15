@@ -37,6 +37,16 @@ export interface TopChampionSummary {
   level: number;
   points: number;
   iconUrl: string;
+  /** Whether the seasonal mastery chest has already been granted for this champion. */
+  chestGranted: boolean;
+  /** Number of mastery tokens earned toward the next hextech chest. */
+  tokensEarned: number;
+  /** Riot epoch ms of the last game played on this champion (0 = never). */
+  lastPlayTime: number;
+  /** Points accumulated within the current mastery level. */
+  pointsSinceLastLevel: number;
+  /** Points remaining until the next mastery level (Infinity for capped levels like 5–7). */
+  pointsUntilNextLevel: number;
 }
 
 export interface RecentMatchSummary {
@@ -293,6 +303,11 @@ export async function loadLoLProfile(
         level: m.championLevel,
         points: m.championPoints,
         iconUrl,
+        chestGranted: m.chestGranted,
+        tokensEarned: m.tokensEarned,
+        lastPlayTime: m.lastPlayTime,
+        pointsSinceLastLevel: m.championPointsSinceLastLevel,
+        pointsUntilNextLevel: m.championPointsUntilNextLevel,
       };
     }),
   );

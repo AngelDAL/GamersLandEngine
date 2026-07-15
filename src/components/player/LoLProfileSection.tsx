@@ -2,21 +2,34 @@
  * LoLProfileSection — public LoL profile block for /players/[id].
  *
  * Server component: reads PlayerMatchHistory from DB (zero Riot calls on page
- * load), then hydrates with the sticky-splash-art from the top champion.
+ * load). The splash art for the user's top champion is now rendered as a
+ * fixed full-page background by the parent page — this component receives
+ * the resolved splashUrl + skinName and shows them in the hero header only.
+ *
  * The page is public — no auth required to see this.
  *
  * Props:
  *   - userId: the User.id whose LoL profile we show
+ *   - splashSkinName?: human-readable skin name (shown next to "Main").
+ *     The actual splash art URL is consumed by the parent page as a
+ *     full-page background, so we don't need to render it here.
  */
 import { prisma } from "@/lib/prisma";
-import { loadLoLProfile, getRandomSplashForTopChampion, type LoLProfileData } from "@/lib/riot-profile";
+import { loadLoLProfile, type LoLProfileData } from "@/lib/riot-profile";
 import { Card } from "@/components/ui/card";
-import { Trophy, Target, Swords, Crown, Award } from "lucide-react";
+import { Trophy, Target, Swords, Crown, Award, Gift, Coins, Clock } from "lucide-react";
 import Link from "next/link";
 
 type Props = {
   userId: string;
   username: string;
+  /**
+   * Human-readable skin name (e.g. "Pulsefire Twisted Fate") for the top
+   * champion's currently-rendered splash. The page resolves the splash art
+   * itself and uses it as the full-page background; we only display the
+   * skin name next to the "Main" label in the hero header.
+   */
+  splashSkinName?: string;
 };
 
 const RANK_COLORS: Record<string, string> = {
@@ -45,10 +58,10 @@ function RankedBlock({ label, entry }: { label: string; entry: NonNullable<LoLPr
   );
 }
 
-export async function LoLProfileSection({ userId, username }: Props) {
+export async function LoLProfileSection({ userId, username, splashSkinName }: Props) {
   const user = await prisma.user.findUnique({
     where: { id: userId },
-    select: { riotGameName: true, riotTagLine: true, riotRegion: true, riotPuuid: true, riotSkinSeed: true },
+    select: { riotGameName: true, riotTagLine: true, riotRegion: true, riotPuuid: true },
   });
   if (!user?.riotPuuid || !user.riotGameName || !user.riotTagLine) {
     return (
@@ -76,26 +89,16 @@ export async function LoLProfileSection({ userId, username }: Props) {
     );
   }
 
-  // Sticky random splash from top mastery champ × user seed
-  let splash: Awaited<ReturnType<typeof getRandomSplashForTopChampion>> = null;
-  if (profile.topChampions[0]) {
-    splash = await getRandomSplashForTopChampion(
-      profile.topChampions[0].championId,
-      user.riotSkinSeed ?? 0,
-    );
-  }
+  // Splash art for the top champion is resolved by the parent page so it
+  // can be used as a full-page background. We only need topChampions[0]
+  // here for the "Main" label in the hero header.
 
   return (
     <div className="space-y-4">
-      {/* Hero card with splash art background */}
-      <Card className="relative overflow-hidden p-0 border-gold/20">
-        {splash?.url ? (
-          <div
-            className="absolute inset-0 bg-cover bg-center blur-sm scale-105"
-            style={{ backgroundImage: `url(${splash.url})` }}
-          />
-        ) : null}
-        <div className="absolute inset-0 bg-gradient-to-t from-background via-background/90 to-background/60" />
+      {/* Hero card. The full-page background is rendered by the parent page;
+          this card sits above it with a dark glass surface so the text stays
+          legible regardless of the splash art behind it. */}
+      <Card className="relative overflow-hidden p-0 border-gold/20 bg-background/70 backdrop-blur-md">
         <div className="relative p-6">
           <div className="flex items-start justify-between gap-4 mb-2">
             <div className="flex items-center gap-3 min-w-0">
@@ -137,11 +140,11 @@ export async function LoLProfileSection({ userId, username }: Props) {
                 </p>
               </div>
             </div>
-            {splash?.skinName && profile.topChampions[0] && (
+            {splashSkinName && profile.topChampions[0] && (
               <div className="text-right shrink-0">
                 <p className="text-[10px] text-white/70 uppercase tracking-wider">Main</p>
                 <p className="text-sm font-bold text-gold">{profile.topChampions[0].name}</p>
-                <p className="text-[10px] text-white/60">{splash.skinName}</p>
+                <p className="text-[10px] text-white/60">{splashSkinName}</p>
               </div>
             )}
           </div>
@@ -194,19 +197,66 @@ export async function LoLProfileSection({ userId, username }: Props) {
             <p className="text-xs text-muted">Sin datos de mastery.</p>
           ) : (
             <div className="space-y-2">
-              {profile.topChampions.map((c) => (
-                <div key={c.championId} className="flex items-center gap-3">
-                  {c.iconUrl ? (
-                    <img src={c.iconUrl} alt={c.name} className="w-8 h-8 rounded border border-border" />
-                  ) : (
-                    <div className="w-8 h-8 rounded bg-surface" />
-                  )}
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium truncate">{c.name}</p>
-                    <p className="text-[10px] text-muted">Nivel {c.level} · {c.points.toLocaleString()} pts</p>
+              {profile.topChampions.map((c) => {
+                const isCappedLevel = c.level >= 5; // 5–7: no progress to next level
+                const total = c.pointsSinceLastLevel + c.pointsUntilNextLevel;
+                const pct = !isCappedLevel && total > 0
+                  ? Math.min(100, Math.round((c.pointsSinceLastLevel / total) * 100))
+                  : 100;
+                return (
+                  <div key={c.championId} className="flex items-start gap-3">
+                    {c.iconUrl ? (
+                      <img src={c.iconUrl} alt={c.name} className="w-8 h-8 rounded border border-border shrink-0" />
+                    ) : (
+                      <div className="w-8 h-8 rounded bg-surface shrink-0" />
+                    )}
+                    <div className="flex-1 min-w-0 space-y-1">
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-sm font-medium truncate">{c.name}</p>
+                        <span
+                          className={`shrink-0 inline-flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded ${
+                            c.chestGranted
+                              ? "bg-emerald-500/15 text-emerald-300 border border-emerald-500/20"
+                              : "bg-amber-500/15 text-amber-300 border border-amber-500/20"
+                          }`}
+                          title={c.chestGranted ? "Cofre ya obtenido esta temporada" : "Cofre aún no obtenido"}
+                        >
+                          <Gift className="w-3 h-3" />
+                          {c.chestGranted ? "Cofre ✓" : "Sin cofre"}
+                        </span>
+                      </div>
+                      <p className="text-[10px] text-muted">
+                        Nivel {c.level} · {c.points.toLocaleString()} pts
+                        {c.tokensEarned > 0 && (
+                          <span className="ml-2 inline-flex items-center gap-0.5 text-amber-300">
+                            <Coins className="w-3 h-3" /> {c.tokensEarned}
+                          </span>
+                        )}
+                        {c.lastPlayTime > 0 && (
+                          <span className="ml-2 inline-flex items-center gap-0.5">
+                            <Clock className="w-3 h-3" /> {formatTimeAgo(c.lastPlayTime)}
+                          </span>
+                        )}
+                      </p>
+                      {!isCappedLevel && total > 0 ? (
+                        <div>
+                          <div className="h-1 w-full rounded-full bg-surface overflow-hidden">
+                            <div
+                              className="h-full bg-gradient-to-r from-gold to-amber-400"
+                              style={{ width: `${pct}%` }}
+                            />
+                          </div>
+                          <p className="text-[9px] text-muted mt-0.5">
+                            {c.pointsSinceLastLevel.toLocaleString()} / {total.toLocaleString()} pts al siguiente nivel
+                          </p>
+                        </div>
+                      ) : (
+                        <p className="text-[9px] text-muted">Nivel máximo</p>
+                      )}
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </Card>
@@ -268,4 +318,24 @@ export async function LoLProfileSection({ userId, username }: Props) {
       </Card>
     </div>
   );
+}
+
+/**
+ * Compact Spanish "time ago" formatter for a Riot epoch-ms timestamp.
+ * Mirrors the granularity of Intl.RelativeTimeFormat without pulling the
+ * polyfill. Returns "—" for 0 / future timestamps.
+ */
+function formatTimeAgo(epochMs: number): string {
+  if (!epochMs || epochMs > Date.now()) return "—";
+  const diffSec = Math.max(0, Math.floor((Date.now() - epochMs) / 1000));
+  if (diffSec < 60) return `hace ${diffSec}s`;
+  const diffMin = Math.floor(diffSec / 60);
+  if (diffMin < 60) return `hace ${diffMin}m`;
+  const diffH = Math.floor(diffMin / 60);
+  if (diffH < 24) return `hace ${diffH}h`;
+  const diffD = Math.floor(diffH / 24);
+  if (diffD < 30) return `hace ${diffD}d`;
+  const diffMo = Math.floor(diffD / 30);
+  if (diffMo < 12) return `hace ${diffMo}mes`;
+  return `hace ${Math.floor(diffMo / 12)}a`;
 }

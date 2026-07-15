@@ -5,6 +5,7 @@ import { Eye } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { LoLProfileSection } from "@/components/player/LoLProfileSection";
+import { loadLoLProfile, getRandomSplashForTopChampion } from "@/lib/riot-profile";
 
 export default async function PlayerPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -16,6 +17,8 @@ export default async function PlayerPage({ params }: { params: Promise<{ id: str
       username: true,
       avatarUrl: true,
       role: true,
+      riotPuuid: true,
+      riotSkinSeed: true,
       registrations: {
         include: {
           tournament: { select: { id: true, name: true, game: true, status: true } },
@@ -62,8 +65,54 @@ export default async function PlayerPage({ params }: { params: Promise<{ id: str
   const total = visibleMatchResults.length;
   const winRate = total > 0 ? Math.round((wins / total) * 100) : 0;
 
+  // Resolve the splash art for the user's top mastery champion so we can
+  // use it as a full-page background. Mirrors the previous hero-card
+  // behavior but exposes the art to the entire page instead of just the
+  // LoL card. The LoL section reads the same DB-cached profile (zero extra
+  // Riot calls) and only needs the skin name for the "Main" label.
+  let splashUrl: string | undefined;
+  let splashSkinName: string | undefined;
+  if (user.riotPuuid) {
+    const lolProfile = await loadLoLProfile(user.id);
+    const top = lolProfile?.topChampions?.[0];
+    if (top) {
+      const splash = await getRandomSplashForTopChampion(
+        top.championId,
+        user.riotSkinSeed ?? 0,
+      );
+      if (splash) {
+        splashUrl = splash.url;
+        splashSkinName = splash.skinName;
+      }
+    }
+  }
+
   return (
-    <div className="max-w-4xl mx-auto px-4 py-8">
+    <div className="relative">
+      {/* Full-page splash background. Positioned fixed so it stays put
+          during scroll and behind all page content. A dark overlay keeps
+          text legible regardless of the splash's brightness. We only
+          render this when the user has a top champion with a resolvable
+          splash — otherwise the page falls back to the default surface. */}
+      {splashUrl ? (
+        <>
+          {/* Static splash at ~20% opacity, behind everything. A bottom
+              gradient fades the art into the page surface so the lower
+              edge is smooth and the art sits as a soft ambient
+              background, not a foreground feature. */}
+          <div
+            aria-hidden="true"
+            className="fixed inset-0 -z-10 bg-cover bg-center bg-no-repeat"
+            style={{ backgroundImage: `url(${splashUrl})`, opacity: 0.2 }}
+          />
+          <div
+            aria-hidden="true"
+            className="fixed inset-x-0 bottom-0 h-1/3 -z-10 bg-gradient-to-b from-transparent to-background"
+          />
+        </>
+      ) : null}
+
+      <div className="max-w-4xl mx-auto px-4 py-8">
       {!canSeePrivate && (
         <div className="text-xs text-muted/70 border-b border-border/30 py-2 mb-4 flex items-center gap-2">
           <Eye className="w-3.5 h-3.5" />
@@ -132,8 +181,13 @@ export default async function PlayerPage({ params }: { params: Promise<{ id: str
       {/* LoL Profile — public, server-rendered, DB-backed. Zero Riot calls on page load. */}
       <div className="mt-8">
         <h2 className="text-xl font-bold text-gold mb-4">Perfil de League of Legends</h2>
-        <LoLProfileSection userId={user.id} username={user.username} />
+        <LoLProfileSection
+          userId={user.id}
+          username={user.username}
+          splashSkinName={splashSkinName}
+        />
       </div>
+    </div>
     </div>
   );
 }
