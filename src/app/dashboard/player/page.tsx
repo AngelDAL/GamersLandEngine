@@ -173,6 +173,7 @@ export default async function PlayerDashboard() {
         <div className="space-y-6">
           {/* LoL Link */}
           <LoLLinkCard
+            userId={session.user.id}
             initialLinked={Boolean(user?.riotGameName && user?.riotTagLine)}
             initialRiotId={user?.riotGameName && user?.riotTagLine ? `${user.riotGameName}#${user.riotTagLine}` : null}
             initialRegion={user?.riotRegion ?? null}

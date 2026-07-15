@@ -91,27 +91,57 @@ export async function LoLProfileSection({ userId, username }: Props) {
       <Card className="relative overflow-hidden p-0 border-gold/20">
         {splash?.url ? (
           <div
-            className="absolute inset-0 bg-cover bg-center"
+            className="absolute inset-0 bg-cover bg-center blur-sm scale-105"
             style={{ backgroundImage: `url(${splash.url})` }}
           />
         ) : null}
-        <div className="absolute inset-0 bg-gradient-to-t from-background via-background/85 to-background/30" />
+        <div className="absolute inset-0 bg-gradient-to-t from-background via-background/90 to-background/60" />
         <div className="relative p-6">
-          <div className="flex items-start justify-between mb-2">
-            <div>
-              <p className="text-xs text-muted uppercase tracking-wider font-bold mb-1">League of Legends</p>
-              <h2 className="text-2xl font-bold text-gold">
-                {profile.gameName}#{profile.tagLine}
-              </h2>
-              <p className="text-xs text-muted mt-0.5">
-                Región {profile.region.toUpperCase()} · Nivel {profile.summonerLevel}
-              </p>
+          <div className="flex items-start justify-between gap-4 mb-2">
+            <div className="flex items-center gap-3 min-w-0">
+              {/* Profile icon (DDragon) with letter-avatar fallback. Uses a CSS
+                  background-image so a missing/failed icon silently falls
+                  through to the first-letter div underneath — no JS needed. */}
+              {profile.profileIconUrl ? (
+                <div
+                  className="relative w-16 h-16 shrink-0 rounded-full border-2 border-gold/60 shadow-lg bg-cover bg-center bg-surface"
+                  style={{ backgroundImage: `url(${profile.profileIconUrl})` }}
+                  role="img"
+                  aria-label={`Icono de invocador de ${profile.gameName}`}
+                >
+                  <div
+                    className="absolute inset-0 rounded-full flex items-center justify-center text-xl font-bold text-gold"
+                    aria-hidden="true"
+                  >
+                    {profile.gameName.charAt(0).toUpperCase() || "?"}
+                  </div>
+                </div>
+              ) : (
+                <div
+                  className="w-16 h-16 shrink-0 rounded-full border-2 border-gold/60 shadow-lg bg-surface flex items-center justify-center text-xl font-bold text-gold"
+                  aria-hidden="true"
+                >
+                  {profile.gameName.charAt(0).toUpperCase() || "?"}
+                </div>
+              )}
+              <div className="min-w-0">
+                <p className="text-xs text-muted uppercase tracking-wider font-bold mb-1">League of Legends</p>
+                <h2
+                  className="text-2xl font-bold text-white truncate"
+                  style={{ textShadow: "0 2px 8px rgba(0,0,0,0.6)" }}
+                >
+                  {profile.gameName}#{profile.tagLine}
+                </h2>
+                <p className="text-xs text-white/70 mt-0.5">
+                  Región {profile.region.toUpperCase()} · Nivel {profile.summonerLevel}
+                </p>
+              </div>
             </div>
             {splash?.skinName && profile.topChampions[0] && (
-              <div className="text-right">
-                <p className="text-[10px] text-muted uppercase tracking-wider">Main</p>
+              <div className="text-right shrink-0">
+                <p className="text-[10px] text-white/70 uppercase tracking-wider">Main</p>
                 <p className="text-sm font-bold text-gold">{profile.topChampions[0].name}</p>
-                <p className="text-[10px] text-muted/80">{splash.skinName}</p>
+                <p className="text-[10px] text-white/60">{splash.skinName}</p>
               </div>
             )}
           </div>

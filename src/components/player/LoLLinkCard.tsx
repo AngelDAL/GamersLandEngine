@@ -9,13 +9,14 @@
  *
  * El "Refrescar" usa POST /api/profile/riot-refresh que respeta un cooldown de 5 min.
  */
-import { useState, useTransition } from "react";
+import { useState, useTransition, useEffect } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { RefreshCw, Unlink, Link2, AlertTriangle, Check, Loader2 } from "lucide-react";
+import { RefreshCw, Unlink, Link2, AlertTriangle, Check, Loader2, Copy, Share2, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 
 type Props = {
+  userId: string;
   initialLinked: boolean;
   initialRiotId: string | null;        // "GameName#TAG"
   initialRegion: string | null;
@@ -33,14 +34,24 @@ const REGION_LABELS: Record<string, string> = {
 
 export function LoLLinkCard(props: Props) {
   const router = useRouter();
+  const { userId } = props;
   const [linked, setLinked] = useState(props.initialLinked);
   const [riotId, setRiotId] = useState(props.initialRiotId ?? "");
   const [region, setRegion] = useState(props.initialRegion ?? "la1");
   const [level, setLevel] = useState<number | null>(props.initialLevel);
   const [err, setErr] = useState<string | null>(null);
   const [okMsg, setOkMsg] = useState<string | null>(null);
+  const [shareUrl, setShareUrl] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
   const [isPending, startTransition] = useTransition();
   const [cooldownLeft, setCooldownLeft] = useState(0);
+
+  // Auto-dismiss share toast after 15s
+  useEffect(() => {
+    if (!shareUrl) return;
+    const t = setTimeout(() => setShareUrl(null), 15000);
+    return () => clearTimeout(t);
+  }, [shareUrl]);
 
   // Tick cooldown countdown
   if (cooldownLeft > 0) {
@@ -63,6 +74,8 @@ export function LoLLinkCard(props: Props) {
       setLinked(true);
       setLevel(data.profile.summonerLevel);
       setOkMsg(`Vinculado: ${data.profile.gameName}#${data.profile.tagLine}`);
+      setShareUrl(`${window.location.origin}/players/${userId}`);
+      setCopied(false);
       router.refresh();
     });
   }
@@ -120,6 +133,56 @@ export function LoLLinkCard(props: Props) {
         <div className="mb-3 p-2 rounded border border-green-500/30 bg-green-500/10 text-green-300 text-xs flex items-start gap-2">
           <Check className="w-3 h-3 mt-0.5 shrink-0" />
           <span>{okMsg}</span>
+        </div>
+      )}
+      {shareUrl && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="mb-3 rounded border border-gold/40 bg-background/80 text-foreground"
+        >
+          <div className="flex items-center justify-between gap-2 px-2 pt-2 text-xs">
+            <div className="flex items-center gap-1.5 text-gold font-medium">
+              <Share2 className="w-3 h-3" />
+              <span>Compartir perfil</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShareUrl(null)}
+              aria-label="Cerrar"
+              className="text-muted hover:text-foreground transition-colors"
+            >
+              <X className="w-3 h-3" />
+            </button>
+          </div>
+          <div className="flex items-center gap-2 px-2 pb-2 pt-1.5">
+            <code className="flex-1 min-w-0 truncate font-mono text-[11px] text-foreground/90 bg-background border border-border rounded px-2 py-1">
+              {shareUrl}
+            </code>
+            <button
+              type="button"
+              onClick={async () => {
+                try {
+                  await navigator.clipboard.writeText(shareUrl);
+                  setCopied(true);
+                  setTimeout(() => setCopied(false), 2000);
+                } catch {
+                  /* clipboard blocked — leave URL visible for manual copy */
+                }
+              }}
+              className="shrink-0 inline-flex items-center gap-1 px-2 py-1 rounded border border-gold/40 text-gold text-xs hover:bg-gold/10 transition-colors"
+            >
+              {copied ? (
+                <>
+                  <Check className="w-3 h-3" /> ¡Copiado!
+                </>
+              ) : (
+                <>
+                  <Copy className="w-3 h-3" /> Copiar
+                </>
+              )}
+            </button>
+          </div>
         </div>
       )}
 

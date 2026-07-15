@@ -16,7 +16,7 @@
 import { prisma } from "./prisma";
 import { riotAccountService } from "./riot-account";
 import { riotDataService, type MasteryEntry, type MatchDetail } from "./riot-data";
-import { getChampionById, getChampionIconUrl, getLatestDDragonVersion } from "./riot-datadragon";
+import { getChampionById, getChampionIconUrl, getLatestDDragonVersion, getProfileIconUrl } from "./riot-datadragon";
 import { cacheGet, cacheSet, cacheInvalidate, CacheTTL } from "./riot-profile-cache";
 import type { RiotRegion } from "./riot-service";
 
@@ -66,6 +66,8 @@ export interface LoLProfileData {
   region: RiotRegion;
   summonerLevel: number;
   profileIconId: number;
+  /** Resolved DDragon URL for the summoner's profile icon. Null/missing when the icon ID is unknown. */
+  profileIconUrl?: string | null;
   ranked: {
     solo?: RankedSummary;
     flex?: RankedSummary;
@@ -343,6 +345,7 @@ export async function loadLoLProfile(
   const summoner = await riotAccountService.getSummonerByPuuid(user.riotPuuid, region);
   const summonerLevel = summoner?.summonerLevel ?? 0;
   const profileIconId = summoner?.profileIconId ?? user.riotIconId ?? 0;
+  const profileIconUrl = await getProfileIconUrl(profileIconId);
 
   const data: LoLProfileData = {
     gameName: user.riotGameName ?? "",
@@ -350,6 +353,7 @@ export async function loadLoLProfile(
     region,
     summonerLevel,
     profileIconId,
+    profileIconUrl,
     ranked: rankedBlock,
     topChampions,
     recentMatches,

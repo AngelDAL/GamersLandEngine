@@ -163,6 +163,18 @@ export async function getChampionIconUrl(championId: number): Promise<string | n
 }
 
 /**
+ * URL to a summoner's profile icon (the small circular avatar you see next
+ * to a player's name in-client). `iconId` is the `profileIconId` from
+ * Summoner-v4. Returns null when the ID is missing/zero so callers can fall
+ * back to a letter avatar.
+ */
+export async function getProfileIconUrl(iconId: number): Promise<string | null> {
+  if (!iconId || iconId <= 0) return null;
+  const version = await getLatestVersion();
+  return `${DDRAGON_BASE}/cdn/${version}/img/profileicon/${iconId}.png`;
+}
+
+/**
  * URL to a champion's splash art.
  *  - skinNum 0 = the default skin ("Original")
  *  - otherwise use the champion's `skins[i].num` field
