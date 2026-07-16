@@ -5,7 +5,7 @@ import { Eye } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { LoLProfileSection } from "@/components/player/LoLProfileSection";
-import { loadLoLProfile } from "@/lib/riot-profile";
+import { loadLoLProfile, getRandomSplashForTopChampion } from "@/lib/riot-profile";
 
 export default async function PlayerPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -67,27 +67,27 @@ export default async function PlayerPage({ params }: { params: Promise<{ id: str
 
   // Resolve the splash art for the user's top mastery champion so we can
   // use it as a full-page background. Mirrors the previous hero-card
-  // We still load the LoL profile to know the top champion and skin name
-  // (for the "Main" label and the gradient accent on the background). The
-  // page-level splash art itself is currently disabled because DDragon is
-  // returning HTTP 403 "AccessDenied" for ALL splash art images across
-  // every CDN version (verified 2026-07-15 from both curl and a real
-  // browser). Once DDragon reopens the asset, the splash layer below can
-  // be re-enabled by re-introducing a `splashUrl` value here.
-  let splashUrl: string | undefined = undefined;
+  // Resolve the splash art for the user's top mastery champion so we can
+  // use it as a full-page background. As of 2026-07-16 we source the art
+  // from CommunityDragon (raw.communitydragon.org) instead of DDragon —
+  // DDragon's /img/splash/ paths started returning 403 on 2026-07-15,
+  // while CDragon's `latest/plugins/rcp-be-lol-game-data/...` path is
+  // still serving and has CORS open (`access-control-allow-origin: *`).
+  // URL is built via buildCommunityDragonSplashUrl() inside riot-profile.
+  let splashUrl: string | undefined;
   let splashSkinName: string | undefined;
   if (user.riotPuuid) {
     const lolProfile = await loadLoLProfile(user.id);
     const top = lolProfile?.topChampions?.[0];
     if (top) {
-      // The "Main" card shows the champion name. We don't have a skin
-      // name at this layer (TopChampionSummary doesn't carry it), so we
-      // only pass splashSkinName if/when the cache includes a skin name.
-      splashSkinName = top.name;
-      // Intentionally do NOT call getRandomSplashForTopChampion here:
-      // every call would hit DDragon and 403, wasting 200-500ms per page
-      // view. The page-level splash layer is disabled (see below); only
-      // the gold/dark gradient and bottom fade render.
+      const splash = await getRandomSplashForTopChampion(
+        top.championId,
+        user.riotSkinSeed ?? 0,
+      );
+      if (splash) {
+        splashUrl = splash.url;
+        splashSkinName = splash.skinName;
+      }
     }
   }
 
@@ -99,16 +99,12 @@ export default async function PlayerPage({ params }: { params: Promise<{ id: str
           render this when the user has a top champion with a resolvable
           splash — otherwise the page falls back to the default surface. */}
       {/*
-        Background layers (splash + gold accent + bottom fade).
-        NOTE: As of 2026-07, DDragon is returning HTTP 403 ("AccessDenied")
-        for ALL splash art images (TwistedFate_*.jpg, Ahri_*.jpg, etc.) at
-        every CDN version we tested, even from real browsers. The splashUrl
-        is therefore likely unreachable at render time. We still emit the
-        layer so that if/when DDragon reopens the asset we render the
-        ambient background; the `onerror` flips the div to `hidden` so a
-        broken icon never shows. Below the splash, a gold/dark gradient
-        overlay + bottom fade are ALWAYS rendered — they carry the visual
-        weight of the background regardless of splash availability.
+        Page-level splash background. Sourced from CommunityDragon
+        (raw.communitydragon.org) — see src/lib/riot-profile.ts for the
+        URL builder. DDragon /img/splash/ has been 403 since 2026-07-15.
+        The gold/dark gradient overlay + bottom fade are ALWAYS rendered
+        (below) and carry the visual weight of the background even if
+        the splash art 404s for chromas or new skins.
       */}
       {splashUrl ? (
         <div

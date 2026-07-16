@@ -138,8 +138,47 @@ export function getQueueName(queueId: number, gameMode: string): string {
 // ─── Persistent history helpers ──────────────────────────────────────────────
 
 /**
+ * Build a CommunityDragon URL for a given champion + skin. CommunityDragon
+ * hosts the full splash art catalog and serves it via Cloudflare with CORS
+ * open, so we can hot-link directly from the browser (no API key, no rate
+ * limit observed in normal use). DDragon's `/img/splash/` path started
+ * returning HTTP 403 "AccessDenied" on 2026-07-15; CDragon's
+ * `latest/plugins/rcp-be-lol-game-data/global/default/assets/characters/...`
+ * path is the drop-in replacement and is still serving as of 2026-07-16.
+ *
+ * Path template:
+ *   /plugins/rcp-be-lol-game-data/global/default/assets/characters/{nameLower}/skins/skin{num}/images/{nameLower}_splash_uncentered_{num}.jpg
+ *
+ * Notes on naming:
+ *   - DDragon's `champ.id` is PascalCase (e.g. "TwistedFate", "DrMundo",
+ *     "KhaZix", "LeeSin", "MonkeyKing"). CommunityDragon uses the
+ *     all-lowercase form, NO hyphens, NO underscores between words. The
+ *     simple `.toLowerCase()` is sufficient for every champion in 2026.
+ *   - Some DDragon "skins" are chromas (variants of a base skin) and do
+ *     NOT have their own assets on CommunityDragon. Calling code should
+ *     resolve the chroma to its base skin number (typically the parent
+ *     id's "num" minus the chroma offset) before constructing the URL.
+ *     This function will return a URL regardless — the caller verifies
+ *     with a HEAD if it needs to be sure the image exists.
+ */
+export function buildCommunityDragonSplashUrl(
+  championId: string, // DDragon champion id, PascalCase, e.g. "TwistedFate"
+  skinNum: number,    // DDragon skin num, e.g. 25 for Crime City Nightmare
+): string {
+  const lower = championId.toLowerCase();
+  return `https://raw.communitydragon.org/latest/plugins/rcp-be-lol-game-data/global/default/assets/characters/${lower}/skins/skin${skinNum}/images/${lower}_splash_uncentered_${skinNum}.jpg`;
+}
+
+/**
  * Pick a stable random skin for the user's top mastery champion. The seed
  * is stored on User.riotSkinSeed and rotated on every manual refresh.
+ *
+ * Returns a CommunityDragon URL (NOT DDragon — DDragon /img/splash/ paths
+ * have been 403 since 2026-07-15). The function resolves chroma variants
+ * to their base skin (because CommunityDragon only ships one splash per
+ * skin family, not per chroma). The skin name returned is the
+ * user-visible variant name so the UI shows "Crime City Nightmare
+ * Twisted Fate (Pearl)" rather than the generic base.
  */
 export async function getRandomSplashForTopChampion(
   topChampionId: number,
@@ -148,16 +187,34 @@ export async function getRandomSplashForTopChampion(
   // Use getChampionById (not getChampionJson) so the lazy per-champion
   // detail fetch runs when the bulk JSON omits `skins`. DDragon's
   // `champion.json` endpoint strips skins to keep the payload small.
-  const { getChampionById, getLatestDDragonVersion } = await import("./riot-datadragon");
+  const { getChampionById } = await import("./riot-datadragon");
   const champ = await getChampionById(topChampionId);
   if (!champ || !Array.isArray(champ.skins) || champ.skins.length === 0) return null;
   const pool = champ.skins; // includes default (id "0", num 0)
   const idx = ((seed % pool.length) + pool.length) % pool.length;
   const skin = pool[idx];
-  const version = await getLatestDDragonVersion();
+
+  // Resolve a chroma variant to its base skin number. CommunityDragon
+  // stores a single splash per skin family, so a chroma like "Crime
+  // City Nightmare Twisted Fate (Pearl)" (DDragon num 32) shares the
+  // base splash with "Crime City Nightmare Twisted Fate" (num 25). We
+  // walk backwards from the chroma to find the most recent skin with
+  // `chromas: true` (the base marker); if none is found, we fall back
+  // to the chroma's own num and let the browser 404 — the gradient
+  // overlay still renders.
+  let assetNum = skin.num;
+  if (!skin.chromas) {
+    for (let i = idx - 1; i >= 0; i--) {
+      if (pool[i].chromas) {
+        assetNum = pool[i].num;
+        break;
+      }
+    }
+  }
+
   const skinName = skin.name === "default" ? `${champ.name} (Original)` : skin.name;
   return {
-    url: `https://ddragon.leagueoflegends.com/cdn/${version}/img/splash/${champ.id}_${skin.num}.jpg`,
+    url: buildCommunityDragonSplashUrl(champ.id, assetNum),
     skinName,
     skinNum: skin.num,
   };
