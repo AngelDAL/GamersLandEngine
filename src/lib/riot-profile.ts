@@ -16,7 +16,7 @@
 import { prisma } from "./prisma";
 import { riotAccountService } from "./riot-account";
 import { riotDataService, type MasteryEntry, type MatchDetail } from "./riot-data";
-import { getChampionById, getChampionIconUrl, getLatestDDragonVersion, getProfileIconUrl } from "./riot-datadragon";
+import { DDragonSkin, getChampionById, getChampionIconUrl, getLatestDDragonVersion, getProfileIconUrl } from "./riot-datadragon";
 import { cacheGet, cacheSet, cacheInvalidate, CacheTTL } from "./riot-profile-cache";
 import type { RiotRegion } from "./riot-service";
 
@@ -152,73 +152,144 @@ export function getQueueName(queueId: number, gameMode: string): string {
  * Notes on naming:
  *   - DDragon's `champ.id` is PascalCase (e.g. "TwistedFate", "DrMundo",
  *     "KhaZix", "LeeSin", "MonkeyKing"). CommunityDragon uses the
- *     all-lowercase form, NO hyphens, NO underscores between words. The
- *     simple `.toLowerCase()` is sufficient for every champion in 2026.
- *   - Some DDragon "skins" are chromas (variants of a base skin) and do
- *     NOT have their own assets on CommunityDragon. Calling code should
- *     resolve the chroma to its base skin number (typically the parent
- *     id's "num" minus the chroma offset) before constructing the URL.
- *     This function will return a URL regardless — the caller verifies
- *     with a HEAD if it needs to be sure the image exists.
+ *     all-lowercase form, NO hyphens, NO underscores between words.
+ *   - Not every skin in DDragon has an asset on CDragon. Older /
+ *     discontinued skins (e.g. Twisted Fate's first 9 legacy skins)
+ *     return 404. Use `findValidBaseSkin` to pick a guaranteed-live
+ *     splash instead of calling this URL builder directly.
  */
 export function buildCommunityDragonSplashUrl(
-  championId: string, // DDragon champion id, PascalCase, e.g. "TwistedFate"
-  skinNum: number,    // DDragon skin num, e.g. 25 for Crime City Nightmare
+  championId: string,
+  skinNum: number,
 ): string {
-  const lower = championId.toLowerCase();
-  return `https://raw.communitydragon.org/latest/plugins/rcp-be-lol-game-data/global/default/assets/characters/${lower}/skins/skin${skinNum}/images/${lower}_splash_uncentered_${skinNum}.jpg`;
+  const champIdLower = championId.toLowerCase();
+  return (
+    `https://raw.communitydragon.org/latest/plugins/rcp-be-lol-game-data/global/default` +
+    `/assets/characters/${champIdLower}/skins/skin${skinNum}/images/${champIdLower}_splash_uncentered_${skinNum}.jpg`
+  );
 }
 
 /**
- * Pick a stable random skin for the user's top mastery champion. The seed
- * is stored on User.riotSkinSeed and rotated on every manual refresh.
+ * HEAD-probe a CommunityDragon splash URL. Returns true if the asset
+ * is live (HTTP 200), false on 404. Other failures (network, 5xx)
+ * are treated as "unknown" and we conservatively return true to avoid
+ * a false negative on a transient outage.
  *
- * Returns a CommunityDragon URL (NOT DDragon — DDragon /img/splash/ paths
- * have been 403 since 2026-07-15). The function resolves chroma variants
- * to their base skin (because CommunityDragon only ships one splash per
- * skin family, not per chroma). The skin name returned is the
- * user-visible variant name so the UI shows "Crime City Nightmare
- * Twisted Fate (Pearl)" rather than the generic base.
+ * We use a short timeout (3s) because this runs in the page render
+ * path and we don't want a slow probe to balloon the response time.
  */
-export async function getRandomSplashForTopChampion(
-  topChampionId: number,
-  seed: number,
-): Promise<{ url: string; skinName: string; skinNum: number } | null> {
-  // Use getChampionById (not getChampionJson) so the lazy per-champion
-  // detail fetch runs when the bulk JSON omits `skins`. DDragon's
-  // `champion.json` endpoint strips skins to keep the payload small.
-  const { getChampionById } = await import("./riot-datadragon");
-  const champ = await getChampionById(topChampionId);
-  if (!champ || !Array.isArray(champ.skins) || champ.skins.length === 0) return null;
-  const pool = champ.skins; // includes default (id "0", num 0)
-  const idx = ((seed % pool.length) + pool.length) % pool.length;
-  const skin = pool[idx];
+async function probeSplashUrl(url: string): Promise<boolean> {
+   try {
+     const ctrl = new AbortController();
+     const timer = setTimeout(() => ctrl.abort(), 3000);
+     const res = await fetch(url, {
+       method: "HEAD",
+       signal: ctrl.signal,
+       // Don't follow redirects to error pages; CDragon returns 404
+       // directly so we never get redirected in the happy path.
+       redirect: "manual",
+     });
+     clearTimeout(timer);
+     if (res.status === 404) return false;
+     return true; // 200, 3xx, or 5xx → assume valid (avoid false negatives)
+   } catch {
+     return true; // network/timeout → assume valid, let the browser decide
+   }
+ }
 
-  // Resolve a chroma variant to its base skin number. CommunityDragon
-  // stores a single splash per skin family, so a chroma like "Crime
-  // City Nightmare Twisted Fate (Pearl)" (DDragon num 32) shares the
-  // base splash with "Crime City Nightmare Twisted Fate" (num 25). We
-  // walk backwards from the chroma to find the most recent skin with
-  // `chromas: true` (the base marker); if none is found, we fall back
-  // to the chroma's own num and let the browser 404 — the gradient
-  // overlay still renders.
-  let assetNum = skin.num;
-  if (!skin.chromas) {
-    for (let i = idx - 1; i >= 0; i--) {
-      if (pool[i].chromas) {
-        assetNum = pool[i].num;
-        break;
-      }
-    }
-  }
+ /**
+  * In-memory cache of which base skin nums are live on CommunityDragon
+  * for a given champion, keyed by lowercased champ id. The probe makes
+  * O(pool) HEAD requests the first time we see a champ, then subsequent
+  * calls just pick from the cached set. This keeps the hot path of
+  * `/players/[id]` fast (no network round-trips after warm-up).
+  *
+  * The cache lives in module scope so it survives across requests
+  * within the same Node.js process. It is invalidated by process
+  * restart, which is fine because CDragon rarely drops legacy assets.
+  */
+ const liveSkinsByChamp = new Map<string, Set<number>>();
 
-  const skinName = skin.name === "default" ? `${champ.name} (Original)` : skin.name;
-  return {
-    url: buildCommunityDragonSplashUrl(champ.id, assetNum),
-    skinName,
-    skinNum: skin.num,
-  };
-}
+ /**
+  * Given a base-skin pool and a starting index, return the first skin
+  * whose CommunityDragon asset is known to be live. The probe runs at
+  * most once per champion per process; subsequent calls read from the
+  * in-memory cache.
+  *
+  * On the first call for a champ we do a bounded walk (max pool.length
+  * probes, 3s timeout each). After that we just look up skin nums in
+  * the cache. If nothing in the pool is live we return null so the
+  * caller can fall back to the gradient-only background.
+  */
+ async function findValidBaseSkin(
+   pool: DDragonSkin[],
+   startIdx: number,
+   championId: string,
+ ): Promise<DDragonSkin | null> {
+   const champKey = championId.toLowerCase();
+   let live = liveSkinsByChamp.get(champKey);
+   if (!live) {
+     // First time we see this champ: probe all bases, build cache.
+     live = new Set<number>();
+     for (const s of pool) {
+       const url = buildCommunityDragonSplashUrl(championId, s.num);
+       // eslint-disable-next-line no-await-in-loop -- intentional serial probes, one champ
+       if (await probeSplashUrl(url)) live.add(s.num);
+     }
+     liveSkinsByChamp.set(champKey, live);
+   }
+   if (live.size === 0) return null;
+   // Walk the pool starting at startIdx until we find a cached live one.
+   for (let offset = 0; offset < pool.length; offset++) {
+     const idx = (startIdx + offset) % pool.length;
+     const skin = pool[idx];
+     if (live.has(skin.num)) return skin;
+   }
+   return null;
+ }
+
+ /**
+  * Filter the champion's skin list down to base skins only. A "base" is
+  * a skin whose DDragon name does NOT contain a parenthesized chroma
+  * variant (e.g. "Crime City Nightmare Twisted Fate (Pearl)"). Only
+  * base skins are guaranteed to have an asset on CommunityDragon, since
+  * CDragon stores one splash per skin family — chromas reuse the base's
+  * image. The DDragon `chromas` field is unreliable as a base marker
+  * (some chromas have `chromas: true` because they have their own sub-
+  * chromas), so we rely on the naming convention instead.
+  */
+ function getBaseSkinPool(champSkins: DDragonSkin[]): DDragonSkin[] {
+   return champSkins.filter((s) => !/\([^)]+\)/.test(s.name));
+ }
+
+ /**
+  * Pick a stable random skin for the user's top mastery champion. The seed
+  * is stored on User.riotSkinSeed and rotated on every manual refresh.
+  *
+  * Returns a CommunityDragon URL (NOT DDragon — DDragon /img/splash/ paths
+  * have been 403 since 2026-07-15). The pool is restricted to base skins
+  * (no chroma variants) AND each candidate is HEAD-probed so the URL
+  * is guaranteed to point at a live asset on CommunityDragon.
+  */
+ export async function getRandomSplashForTopChampion(
+   topChampionId: number,
+   seed: number,
+ ): Promise<{ url: string; skinName: string; skinNum: number } | null> {
+   const { getChampionById } = await import("./riot-datadragon");
+   const champ = await getChampionById(topChampionId);
+   if (!champ || !Array.isArray(champ.skins) || champ.skins.length === 0) return null;
+   const pool = getBaseSkinPool(champ.skins);
+   if (pool.length === 0) return null;
+   const startIdx = ((seed % pool.length) + pool.length) % pool.length;
+   const skin = await findValidBaseSkin(pool, startIdx, champ.id);
+   if (!skin) return null;
+   const skinName = skin.name === "default" ? `${champ.name} (Original)` : skin.name;
+   return {
+     url: buildCommunityDragonSplashUrl(champ.id, skin.num),
+     skinName,
+     skinNum: skin.num,
+   };
+ }
 
 /**
  * Read the last 20 matches from PlayerMatchHistory. If the user has fewer than

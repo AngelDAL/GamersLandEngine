@@ -144,9 +144,14 @@ export async function LoLProfileSection({ userId, username, splashSkinName }: Pr
               <div className="text-right shrink-0">
                 <p className="text-[10px] text-white/70 uppercase tracking-wider">Main</p>
                 <p className="text-sm font-bold text-gold">{profile.topChampions[0].name}</p>
-                {splashSkinName && splashSkinName !== profile.topChampions[0].name && (
-                  <p className="text-[10px] text-white/60">{splashSkinName}</p>
-                )}
+                {/*
+                  Skin name intentionally NOT shown here. The splash art
+                  in the page background already conveys the skin; the
+                  duplicate label next to "Main" was visual noise.
+                  Keep the splashSkinName prop in the signature in case
+                  we want to surface it elsewhere later (e.g. on hover
+                  tooltip over the background).
+                */}
               </div>
             )}
           </div>
@@ -192,55 +197,96 @@ export async function LoLProfileSection({ userId, username, splashSkinName }: Pr
         </Card>
 
         <Card className="p-4">
-          <h3 className="text-sm font-bold text-gold flex items-center gap-2 mb-3">
+          <h3 className="text-sm font-bold text-gold flex items-center gap-2 mb-4">
             <Crown className="w-4 h-4" /> Top 5 Campeones
           </h3>
           {profile.topChampions.length === 0 ? (
             <p className="text-xs text-muted">Sin datos de mastery.</p>
           ) : (
-            <div className="space-y-2">
-              {profile.topChampions.map((c) => {
+            <div className="space-y-3">
+              {profile.topChampions.map((c, idx) => {
                 const isCappedLevel = c.level >= 5; // 5–7: no progress to next level
                 const total = c.pointsSinceLastLevel + c.pointsUntilNextLevel;
                 const pct = !isCappedLevel && total > 0
                   ? Math.min(100, Math.round((c.pointsSinceLastLevel / total) * 100))
                   : 100;
+                // Top 3 get a stronger accent: gold border + gold rank
+                // chip. Top 4–5 use a subtler muted treatment.
+                const isPodium = idx < 3;
                 return (
-                  <div key={c.championId} className="flex items-start gap-3">
+                  <div
+                    key={c.championId}
+                    className={`relative flex items-start gap-3 rounded-lg p-2.5 ${
+                      isPodium
+                        ? "bg-gradient-to-r from-gold/10 to-transparent border border-gold/30"
+                        : "bg-surface/40 border border-border"
+                    }`}
+                  >
+                    {/* Rank chip */}
+                    <div
+                      className={`absolute -top-2 -left-2 w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold ${
+                        isPodium
+                          ? "bg-gold text-background shadow-md"
+                          : "bg-surface text-muted-foreground border border-border"
+                      }`}
+                      aria-label={`Rank ${idx + 1}`}
+                    >
+                      {idx + 1}
+                    </div>
                     {c.iconUrl ? (
-                      <img src={c.iconUrl} alt={c.name} className="w-8 h-8 rounded border border-border shrink-0" />
+                      <img
+                        src={c.iconUrl}
+                        alt={c.name}
+                        className={`shrink-0 rounded border-2 ${
+                          isPodium ? "w-12 h-12 border-gold/60" : "w-10 h-10 border-border"
+                        }`}
+                      />
                     ) : (
-                      <div className="w-8 h-8 rounded bg-surface shrink-0" />
+                      <div className={`shrink-0 rounded bg-surface ${isPodium ? "w-12 h-12" : "w-10 h-10"}`} />
                     )}
                     <div className="flex-1 min-w-0 space-y-1">
-                      <p className="text-sm font-medium truncate">{c.name}</p>
-                      <p className="text-[10px] text-muted">
-                        Nivel {c.level} · {c.points.toLocaleString()} pts
+                      <div className="flex items-baseline justify-between gap-2">
+                        <p className={`truncate ${isPodium ? "text-base font-bold" : "text-sm font-semibold"}`}>
+                          {c.name}
+                        </p>
+                        {isPodium && (
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-gold shrink-0">
+                            Nivel {c.level}
+                          </span>
+                        )}
+                      </div>
+                      <p className={`flex items-center gap-2 flex-wrap ${isPodium ? "text-xs" : "text-[11px]"} text-muted-foreground`}>
+                        <span className={isPodium ? "font-bold text-foreground/90" : "font-medium"}>
+                          {c.points.toLocaleString()} pts
+                        </span>
                         {c.tokensEarned > 0 && (
-                          <span className="ml-2 inline-flex items-center gap-0.5 text-amber-300">
+                          <span className="inline-flex items-center gap-0.5 text-amber-300">
                             <Coins className="w-3 h-3" /> {c.tokensEarned}
                           </span>
                         )}
                         {c.lastPlayTime > 0 && (
-                          <span className="ml-2 inline-flex items-center gap-0.5">
+                          <span className="inline-flex items-center gap-0.5">
                             <Clock className="w-3 h-3" /> {formatTimeAgo(c.lastPlayTime)}
                           </span>
+                        )}
+                        {!isPodium && (
+                          <span className="text-[10px] text-muted">· Nivel {c.level}</span>
                         )}
                       </p>
                       {!isCappedLevel && total > 0 ? (
                         <div>
-                          <div className="h-1 w-full rounded-full bg-surface overflow-hidden">
+                          <div className="h-1.5 w-full rounded-full bg-surface overflow-hidden">
                             <div
                               className="h-full bg-gradient-to-r from-gold to-amber-400"
                               style={{ width: `${pct}%` }}
                             />
                           </div>
-                          <p className="text-[9px] text-muted mt-0.5">
+                          <p className="text-[10px] text-muted mt-0.5">
                             {c.pointsSinceLastLevel.toLocaleString()} / {total.toLocaleString()} pts al siguiente nivel
                           </p>
                         </div>
                       ) : (
-                        <p className="text-[9px] text-muted">Nivel máximo</p>
+                        <p className="text-[10px] text-amber-300/80 font-semibold">Nivel máximo</p>
                       )}
                     </div>
                   </div>

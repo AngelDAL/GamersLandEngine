@@ -80,9 +80,14 @@ export default async function PlayerPage({ params }: { params: Promise<{ id: str
     const lolProfile = await loadLoLProfile(user.id);
     const top = lolProfile?.topChampions?.[0];
     if (top) {
+      // Random skin on every page load (no persistent seed) — each visit
+      // to a profile shows a different splash art of the user's main
+      // champion, giving the profile a "wallpaper of the day" feel.
+      // The pool is still bound by the chroma resolver so the URL always
+      // points at a skin that actually exists on CommunityDragon.
       const splash = await getRandomSplashForTopChampion(
         top.championId,
-        user.riotSkinSeed ?? 0,
+        Math.floor(Math.random() * 1e9),
       );
       if (splash) {
         splashUrl = splash.url;
