@@ -28,7 +28,53 @@ export async function POST(req: Request) {
   return NextResponse.json(team, { status: 201 });
 }
 
-export async function GET() {
+export async function GET(req: Request) {
+  const { searchParams } = new URL(req.url);
+  const availableForUser = searchParams.get("availableForUser") === "true";
+
+  if (availableForUser) {
+    const session = await auth();
+    if (!session?.user) {
+      return NextResponse.json({ error: "No autorizado" }, { status: 401 });
+    }
+
+    // Find team IDs where the user already has an ACTIVE, PENDING, or REQUEST membership
+    const existingMemberships = await prisma.teamMember.findMany({
+      where: {
+        userId: session.user.id,
+        status: { in: ["ACTIVE", "PENDING", "REQUEST"] },
+      },
+      select: { teamId: true },
+    });
+    const excludeTeamIds = existingMemberships.map((m) => m.teamId);
+
+    const teams = await prisma.team.findMany({
+      where: {
+        id: { notIn: excludeTeamIds },
+      },
+      include: {
+        captain: { select: { id: true, username: true } },
+        _count: { select: { members: { where: { status: "ACTIVE" } } } },
+        members: {
+          where: { status: "ACTIVE" },
+          include: {
+            user: {
+              select: {
+                id: true,
+                username: true,
+                riotGameName: true,
+                riotTagLine: true,
+                riotIconId: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    return NextResponse.json(teams);
+  }
+
   const teams = await prisma.team.findMany({
     include: {
       captain: { select: { id: true, username: true } },

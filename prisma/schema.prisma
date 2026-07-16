@@ -6,7 +6,6 @@ generator client {
 datasource db {
   provider = "mysql"
 }
-
 enum Role {
   ADMIN
   ORGANIZER
@@ -42,6 +41,7 @@ enum MemberStatus {
   PENDING
   ACTIVE
   REJECTED
+  REQUEST
 }
 
 enum MatchStatus {
@@ -85,6 +85,12 @@ enum PrizeType {
 model User {
   id             String   @id @default(uuid())
   username       String   @unique
+  email          String?  @unique
+  passwordHash   String?
+  emailVerified  DateTime?
+  verificationToken String?
+  resetToken        String?
+  resetTokenExpires DateTime?
   role           Role     @default(PLAYER)
   adminPassword  String?
   qrCode         String?
@@ -190,6 +196,7 @@ model TeamMember {
   teamId  String
   status  MemberStatus @default(PENDING)
   message String?
+  lane    String?      // "TOP", "JUNGLE", "MID", "ADC", "SUPPORT"
 
   user User @relation(fields: [userId], references: [id])
   team Team @relation(fields: [teamId], references: [id])
@@ -250,6 +257,7 @@ model TournamentRegistration {
   teamId       String?
   status       RegistrationStatus @default(PENDING)
   paid         Boolean            @default(false)
+  checkedInAt  DateTime?
   registeredBy String?
   createdAt    DateTime           @default(now())
 

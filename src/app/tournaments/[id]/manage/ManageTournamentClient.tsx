@@ -8,6 +8,7 @@ import { QRScanner } from "@/components/player/QRScanner";
 import { RegistrationOverlay } from "@/components/shared/RegistrationOverlay";
 import { ConfirmRegistrationModal } from "@/components/shared/ConfirmRegistrationModal";
 import { TeamDnD } from "@/components/tournament/TeamDnD";
+import { TeamRequestsPanel } from "@/components/tournament/TeamRequestsPanel";
 import { showToast, ToastContainer } from "@/components/shared/Toast";
 import { useSocket } from "@/hooks/useSocket";
 import {
@@ -25,9 +26,20 @@ type Team = {
   members: { id: string; userId: string; user: { id: string; username: string }; status: string }[];
 };
 
+type Registration = {
+  id: string;
+  userId: string;
+  paid: boolean;
+  checkedInAt: string | null;
+  status: string;
+  createdAt: string;
+  user: { id: string; username: string; avatarUrl: string | null };
+};
+
 type Props = {
   tournament: any;
   players: Player[];
+  registrations: Registration[];
   allPlayers: Player[];
   organizers: { id: string; username: string; role: string }[];
   teams: Team[];
@@ -55,13 +67,18 @@ function InfoTip({ text }: { text: string }) {
   );
 }
 
-export function ManageTournamentClient({ tournament, players, allPlayers, organizers, teams, freeAgents, isAdmin }: Props) {
+export function ManageTournamentClient({ tournament, players, registrations, allPlayers, organizers, teams, freeAgents, isAdmin }: Props) {
   const isIndividual = tournament.isTeamBased === false;
   const membersInTeam = new Set(teams.flatMap((t: any) => t.members.map((m: any) => m.userId)));
   const router = useRouter();
   const [tab, setTab] = useState<"alta" | "equipos" | "general" | "bracket" | "prizes" | "participants">("alta");
   const [loading, setLoading] = useState(false);
   const { socket } = useSocket();
+
+  // Registrations table toggles
+  const [togglingPayment, setTogglingPayment] = useState<string | null>(null);
+  const [togglingCheckIn, setTogglingCheckIn] = useState<string | null>(null);
+  const [regTableSearch, setRegTableSearch] = useState("");
 
   // Overlay
   const [overlay, setOverlay] = useState<{ type: "registered" | "already" | "captain" | "error"; username: string; teamName?: string } | null>(null);
@@ -122,6 +139,15 @@ export function ManageTournamentClient({ tournament, players, allPlayers, organi
   const filteredRegistered = players.filter((p) =>
     p.username.toLowerCase().includes(registeredSearch.toLowerCase())
   );
+
+  // Sort registrations: unchecked check-in first
+  const sortedRegs = [...registrations]
+    .filter((r) => r.user.username.toLowerCase().includes(regTableSearch.toLowerCase()))
+    .sort((a, b) => {
+      if (a.checkedInAt === null && b.checkedInAt !== null) return -1;
+      if (a.checkedInAt !== null && b.checkedInAt === null) return 1;
+      return 0;
+    });
 
   const registerPlayer = async (userId: string, teamNameArg?: string) => {
     setRegistering(true);
@@ -210,6 +236,48 @@ export function ManageTournamentClient({ tournament, players, allPlayers, organi
     } catch { setTeamRegMsg("Error de conexión"); }
     setRegistering(false);
     router.refresh();
+  };
+
+  // Toggle payment for a registration
+  const togglePayment = async (regId: string, paid: boolean) => {
+    setTogglingPayment(regId);
+    try {
+      const res = await fetch(`/api/tournaments/${tournament.id}/registrations/${regId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ paid }),
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        alert(data.error || "Error al actualizar pago");
+      } else {
+        router.refresh();
+      }
+    } catch {
+      alert("Error de conexión");
+    }
+    setTogglingPayment(null);
+  };
+
+  // Toggle check-in for a registration
+  const toggleCheckIn = async (regId: string, checkedIn: boolean) => {
+    setTogglingCheckIn(regId);
+    try {
+      const res = await fetch(`/api/tournaments/${tournament.id}/registrations/${regId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ checkedIn }),
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        alert(data.error || "Error al actualizar check-in");
+      } else {
+        router.refresh();
+      }
+    } catch {
+      alert("Error de conexión");
+    }
+    setTogglingCheckIn(null);
   };
 
   const handleQRScan = async (code: string) => {
@@ -601,10 +669,190 @@ export function ManageTournamentClient({ tournament, players, allPlayers, organi
             )}
           </Card>
         )}
-        </>)}
+
+        {/* ═══════ JUGADORES REGISTRADOS (TABLA CON PAGO Y CHECK-IN) ═══════ */}
+        <Card className="p-4 mt-4">
+          <div className="flex items-center gap-2 mb-4">
+            <h2 className="text-base font-bold text-gold">Jugadores registrados ({registrations.length})</h2>
+            <InfoTip text="Gestiona el pago y check-in de los jugadores registrados. Click en los badges para cambiar su estado." />
+          </div>
+
+          {/* Search */}
+          <div className="relative mb-3">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted" />
+            <input
+              type="text"
+              placeholder="Buscar por username..."
+              value={regTableSearch}
+              onChange={(e) => setRegTableSearch(e.target.value)}
+              className="w-full pl-8 pr-2 py-2 bg-background border border-border rounded-lg text-sm text-foreground placeholder-muted focus:outline-none focus:border-gold"
+            />
+          </div>
+
+          {/* Desktop table */}
+          <div className="hidden md:block overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="border-b border-border">
+                  <th className="text-left py-2 px-2 text-muted font-medium">#</th>
+                  <th className="text-left py-2 px-2 text-muted font-medium">Usuario</th>
+                  <th className="text-left py-2 px-2 text-muted font-medium">Pago</th>
+                  <th className="text-left py-2 px-2 text-muted font-medium">Check-in</th>
+                  <th className="text-left py-2 px-2 text-muted font-medium">Registrado</th>
+                </tr>
+              </thead>
+              <tbody>
+                {sortedRegs.length === 0 ? (
+                  <tr>
+                    <td colSpan={5} className="text-center py-8 text-muted text-xs">Sin resultados</td>
+                  </tr>
+                ) : (
+                  sortedRegs.map((reg, idx) => (
+                    <tr key={reg.id} className="border-b border-border hover:bg-background/50 transition-colors">
+                      <td className="py-2 px-2 text-muted">{idx + 1}</td>
+                      <td className="py-2 px-2">
+                        <div className="flex items-center gap-2">
+                          <div className="w-6 h-6 rounded-full bg-gold/10 flex items-center justify-center text-gold text-[9px] font-bold shrink-0">
+                            {reg.user.username[0].toUpperCase()}
+                          </div>
+                          <span className="font-medium">{reg.user.username}</span>
+                        </div>
+                      </td>
+                      <td className="py-2 px-2">
+                        <button
+                          onClick={() => togglePayment(reg.id, !reg.paid)}
+                          disabled={togglingPayment === reg.id}
+                          className={`px-2 py-1 rounded-lg text-[10px] font-bold border transition-all ${
+                            reg.paid
+                              ? "text-green-400 bg-green-500/10 border-green-500/30"
+                              : "text-amber-300 bg-amber-500/10 border-amber-500/30"
+                          } ${togglingPayment === reg.id ? "opacity-50 cursor-not-allowed" : "cursor-pointer hover:opacity-80"}`}
+                        >
+                          {togglingPayment === reg.id ? (
+                            <Loader2 className="w-3 h-3 animate-spin inline" />
+                          ) : reg.paid ? (
+                            "✅ Pagado"
+                          ) : (
+                            "❌ Pendiente"
+                          )}
+                        </button>
+                      </td>
+                      <td className="py-2 px-2">
+                        {reg.checkedInAt ? (
+                          <button
+                            onClick={() => toggleCheckIn(reg.id, false)}
+                            disabled={togglingCheckIn === reg.id}
+                            className={`px-2 py-1 rounded-lg text-[10px] font-bold border text-green-400 bg-green-500/10 border-green-500/30 ${
+                              togglingCheckIn === reg.id ? "opacity-50 cursor-not-allowed" : "cursor-pointer hover:opacity-80"
+                            }`}
+                          >
+                            {togglingCheckIn === reg.id ? (
+                              <Loader2 className="w-3 h-3 animate-spin inline" />
+                            ) : (
+                              <>✅ Llegó a las {new Date(reg.checkedInAt).toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit" })}</>
+                            )}
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => toggleCheckIn(reg.id, true)}
+                            disabled={togglingCheckIn === reg.id}
+                            className={`px-2 py-1 rounded-lg text-[10px] font-bold border text-muted bg-background border-border ${
+                              togglingCheckIn === reg.id ? "opacity-50 cursor-not-allowed" : "cursor-pointer hover:bg-gold/10 hover:text-gold hover:border-gold/30"
+                            }`}
+                          >
+                            {togglingCheckIn === reg.id ? (
+                              <Loader2 className="w-3 h-3 animate-spin inline" />
+                            ) : (
+                              "❌ No ha llegado"
+                            )}
+                          </button>
+                        )}
+                      </td>
+                      <td className="py-2 px-2 text-muted">
+                        {new Date(reg.createdAt).toLocaleDateString("es-MX", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Mobile cards */}
+          <div className="md:hidden space-y-2">
+            {sortedRegs.length === 0 ? (
+              <div className="text-center py-6 text-muted text-xs">Sin resultados</div>
+            ) : (
+              sortedRegs.map((reg, idx) => (
+                <div key={reg.id} className="bg-background border border-border rounded-lg p-3">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2">
+                      <div className="w-6 h-6 rounded-full bg-gold/10 flex items-center justify-center text-gold text-[9px] font-bold shrink-0">
+                        {reg.user.username[0].toUpperCase()}
+                      </div>
+                      <span className="text-sm font-medium">{reg.user.username}</span>
+                    </div>
+                    <span className="text-[10px] text-muted">#{idx + 1}</span>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    <button
+                      onClick={() => togglePayment(reg.id, !reg.paid)}
+                      disabled={togglingPayment === reg.id}
+                      className={`px-2 py-1 rounded-lg text-[10px] font-bold border transition-all ${
+                        reg.paid
+                          ? "text-green-400 bg-green-500/10 border-green-500/30"
+                          : "text-amber-300 bg-amber-500/10 border-amber-500/30"
+                      } ${togglingPayment === reg.id ? "opacity-50 cursor-not-allowed" : "cursor-pointer hover:opacity-80"}`}
+                    >
+                      {togglingPayment === reg.id ? (
+                        <Loader2 className="w-3 h-3 animate-spin inline" />
+                      ) : reg.paid ? (
+                        "✅ Pagado"
+                      ) : (
+                        "❌ Pendiente"
+                      )}
+                    </button>
+                    {reg.checkedInAt ? (
+                      <button
+                        onClick={() => toggleCheckIn(reg.id, false)}
+                        disabled={togglingCheckIn === reg.id}
+                        className={`px-2 py-1 rounded-lg text-[10px] font-bold border text-green-400 bg-green-500/10 border-green-500/30 ${
+                          togglingCheckIn === reg.id ? "opacity-50 cursor-not-allowed" : "cursor-pointer hover:opacity-80"
+                        }`}
+                      >
+                        {togglingCheckIn === reg.id ? (
+                          <Loader2 className="w-3 h-3 animate-spin inline" />
+                        ) : (
+                          <>✅ {new Date(reg.checkedInAt).toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit" })}</>
+                        )}
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => toggleCheckIn(reg.id, true)}
+                        disabled={togglingCheckIn === reg.id}
+                        className={`px-2 py-1 rounded-lg text-[10px] font-bold border text-muted bg-background border-border ${
+                          togglingCheckIn === reg.id ? "opacity-50 cursor-not-allowed" : "cursor-pointer hover:bg-gold/10 hover:text-gold hover:border-gold/30"
+                        }`}
+                      >
+                        {togglingCheckIn === reg.id ? (
+                          <Loader2 className="w-3 h-3 animate-spin inline" />
+                        ) : (
+                          "❌ No ha llegado"
+                        )}
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </Card>
+      </>
+      )}
 
       {/* ═══════ EQUIPOS ═══════ */}
       {tab === "equipos" && (
+        <><TeamRequestsPanel tournamentId={tournament.id} />
         <TeamDnD
           tournamentId={tournament.id}
           tournamentName={tournament.name}
@@ -615,7 +863,7 @@ export function ManageTournamentClient({ tournament, players, allPlayers, organi
           allPlayers={players}
           teamSize={tournament.teamSize || 5}
         />
-      )}
+      </>)}
 
       {/* ═══════ GENERAL ═══════ */}
       {tab === "general" && (

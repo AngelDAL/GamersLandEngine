@@ -9,12 +9,18 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   }
 
   const role = session.user.role;
-  if (role !== "ADMIN" && role !== "ORGANIZER") {
-    return NextResponse.json({ error: "No tienes permisos" }, { status: 403 });
-  }
-
   const { id } = await params;
-  const { userId, teamId } = await req.json();
+  const body = await req.json().catch(() => ({}));
+  const { userId: targetId, teamId } = body;
+
+  // If no target userId, user is registering themselves
+  const userId = targetId || session.user.id;
+  const isAdmin = role === "ADMIN" || role === "ORGANIZER";
+
+  // Only admins can register OTHER people
+  if (userId !== session.user.id && !isAdmin) {
+    return NextResponse.json({ error: "No puedes registrar a otro jugador" }, { status: 403 });
+  }
 
   const existing = await prisma.tournamentRegistration.findUnique({
     where: { tournamentId_userId: { tournamentId: id, userId } },
