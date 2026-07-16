@@ -1,7 +1,12 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
-import { generateSingleElimination, generateDoubleElimination, generateRoundRobin } from "@/lib/bracket-engine";
+import {
+  generateSingleElimination,
+  generateDoubleElimination,
+  generateRoundRobin,
+  type BracketMatchDef,
+} from "@/lib/bracket-engine";
 import { ensureRiotTournament } from "@/lib/riot-integration";
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -22,8 +27,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     return NextResponse.json({ error: "Torneo no encontrado" }, { status: 404 });
   }
 
-  // Only auto-register with Riot for League of Legends tournaments. Other
-  // games don't have a Riot integration.
   const isLeagueOfLegends = (tournament.game ?? "").toUpperCase() === "LEAGUE_OF_LEGENDS";
 
   const body = await req.json().catch(() => ({}));
@@ -41,7 +44,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     }
   } else {
     if (slotOrder) {
-      // Use the custom slot order from the organizer
       const registrations = await prisma.tournamentRegistration.findMany({
         where: { tournamentId: id },
         include: { user: { select: { id: true, username: true } } },
@@ -51,8 +53,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       if (active.length < 2) {
         return NextResponse.json({ error: "Se necesitan al menos 2 jugadores asignados" }, { status: 400 });
       }
-      // Build bracket manually from slot order
-      // We create contestants respecting the slot positions (null = BYE)
       contestants = slotOrder.map((id) => ({
         id: id || `__bye__${Math.random()}`,
         name: id ? (userMap.get(id) || "Jugador") : "__BYE__",
@@ -69,80 +69,159 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     }
   }
 
-  // Delete existing rounds
+  // Delete existing rounds and matches
+  await prisma.match.deleteMany({ where: { round: { tournamentId: id } } });
   await prisma.tournamentRound.deleteMany({ where: { tournamentId: id } });
 
-  let bracket: { round: number; position: number; team1Id: string | null; team2Id: string | null }[][];
+  // Generate bracket
+  let matchDefs: BracketMatchDef[];
 
   if (slotOrder && !tournament.isTeamBased) {
     // Manual bracket from slot positions
     const totalSlots = slotOrder.length;
     const numRounds = Math.log2(totalSlots);
+    const defs: BracketMatchDef[] = [];
 
-    // Round 1: pair up slots
-    const round1: { round: number; position: number; team1Id: string | null; team2Id: string | null }[] = [];
-    for (let i = 0; i < totalSlots / 2; i++) {
-      round1.push({
-        round: 1,
-        position: i,
-        team1Id: contestants[i * 2]?.id?.startsWith("__bye__") ? null : contestants[i * 2]?.id || null,
-        team2Id: contestants[i * 2 + 1]?.id?.startsWith("__bye__") ? null : contestants[i * 2 + 1]?.id || null,
+    // Round 1
+    const round1Count = totalSlots / 2;
+    for (let p = 0; p < round1Count; p++) {
+      const t1 = contestants[p * 2]?.id?.startsWith("__bye__") ? null : contestants[p * 2]?.id || null;
+      const t2 = contestants[p * 2 + 1]?.id?.startsWith("__bye__") ? null : contestants[p * 2 + 1]?.id || null;
+      defs.push({
+        roundNumber: 1,
+        bracketPosition: p,
+        phase: "UPPER",
+        team1Id: t1,
+        team2Id: t2,
+        winnerNextMatchIdx: -1,
+        winnerNextSlot: 1,
+        loserNextMatchIdx: -1,
+        loserNextSlot: 1,
       });
     }
-    bracket = [round1];
 
-    // Subsequent rounds: placeholders
+    // Subsequent rounds
     for (let r = 2; r <= numRounds; r++) {
       const matchCount = totalSlots / Math.pow(2, r);
-      const round: typeof round1 = [];
-      for (let i = 0; i < matchCount; i++) {
-        round.push({ round: r, position: i, team1Id: null, team2Id: null });
+      for (let p = 0; p < matchCount; p++) {
+        defs.push({
+          roundNumber: r,
+          bracketPosition: p,
+          phase: "UPPER",
+          team1Id: null,
+          team2Id: null,
+          winnerNextMatchIdx: -1,
+          winnerNextSlot: 1,
+          loserNextMatchIdx: -1,
+          loserNextSlot: 1,
+        });
       }
-      bracket.push(round);
     }
+
+    // Set winner connections for manual bracket
+    for (let i = 0; i < defs.length; i++) {
+      const d = defs[i];
+      const nextIdx = defs.findIndex(x => x.roundNumber === d.roundNumber + 1 && x.bracketPosition === Math.floor(d.bracketPosition / 2));
+      if (nextIdx >= 0) {
+        defs[i].winnerNextMatchIdx = nextIdx;
+        defs[i].winnerNextSlot = d.bracketPosition % 2 === 0 ? 1 : 2;
+      }
+    }
+
+    matchDefs = defs;
   } else {
     switch (tournament.bracketType) {
-      case "DOUBLE_ELIMINATION": {
-        const { upper, final } = generateDoubleElimination(contestants);
-        bracket = [...upper, ...final];
+      case "DOUBLE_ELIMINATION":
+        matchDefs = generateDoubleElimination(contestants);
         break;
-      }
       case "ROUND_ROBIN":
-        bracket = generateRoundRobin(contestants);
+        matchDefs = generateRoundRobin(contestants);
         break;
       default:
-        bracket = generateSingleElimination(contestants);
+        matchDefs = generateSingleElimination(contestants);
     }
   }
 
-  const createdRounds: any[] = [];
-  for (const roundMatches of bracket) {
-    const createdRound = await prisma.tournamentRound.create({
-      data: { tournamentId: id, roundNumber: createdRounds.length + 1 },
-    });
+  // Group match definitions by roundNumber to create TournamentRound records
+  const roundGroups = new Map<number, BracketMatchDef[]>();
+  for (const m of matchDefs) {
+    const existing = roundGroups.get(m.roundNumber) || [];
+    existing.push(m);
+    roundGroups.set(m.roundNumber, existing);
+  }
 
-    for (const m of roundMatches) {
-      await prisma.match.create({
+  // Create rounds and matches, keeping a mapping of (roundNumber, position) → match ID
+  type MatchKey = string; // `${roundNumber}:${position}`
+  const matchIdMap = new Map<MatchKey, string>();
+  const roundIdMap = new Map<number, string>();
+
+  for (const [roundNum, defs] of [...roundGroups.entries()].sort(([a], [b]) => a - b)) {
+    const round = await prisma.tournamentRound.create({
+      data: { tournamentId: id, roundNumber: roundNum },
+    });
+    roundIdMap.set(roundNum, round.id);
+
+    for (const d of defs) {
+      const match = await prisma.match.create({
         data: {
-          roundId: createdRound.id,
-          team1Id: m.team1Id,
-          team2Id: m.team2Id,
-          bracketPosition: m.position,
+          roundId: round.id,
+          bracketPosition: d.bracketPosition,
+          phase: d.phase,
+          team1Id: d.team1Id,
+          team2Id: d.team2Id,
+          status: "PENDING",
         },
       });
+      matchIdMap.set(`${roundNum}:${d.bracketPosition}`, match.id);
     }
-
-    createdRounds.push(createdRound);
   }
 
+  // ── Set up connections ──
+  // Now that all matches have IDs, we link them up.
+  // Iterate through matchDefs parallel to allCreatedMatches.
+
+  const allCreatedMatches = await prisma.match.findMany({
+    where: { round: { tournamentId: id } },
+    orderBy: [{ round: { roundNumber: "asc" } }, { bracketPosition: "asc" }],
+  });
+
+  // Iterate the round groups in order, matching definitions to created matches
+  let matchIndex = 0;
+  for (const [roundNum, defs] of [...roundGroups.entries()].sort(([a], [b]) => a - b)) {
+    for (const d of defs) {
+      const thisMatchId = allCreatedMatches[matchIndex]?.id;
+      if (!thisMatchId) { matchIndex++; continue; }
+
+      const updates: Record<string, any> = {};
+
+      if (d.winnerNextMatchIdx >= 0 && d.winnerNextMatchIdx < allCreatedMatches.length) {
+        updates.winnerNextMatchId = allCreatedMatches[d.winnerNextMatchIdx].id;
+        updates.winnerNextSlot = d.winnerNextSlot;
+      }
+
+      if (d.loserNextMatchIdx >= 0 && d.loserNextMatchIdx < allCreatedMatches.length) {
+        updates.loserNextMatchId = allCreatedMatches[d.loserNextMatchIdx].id;
+        updates.loserNextSlot = d.loserNextSlot;
+      }
+
+      if (Object.keys(updates).length > 0) {
+        await prisma.match.update({
+          where: { id: thisMatchId },
+          data: updates,
+        });
+      }
+
+      matchIndex++;
+    }
+  }
+
+  // Update tournament status
   await prisma.tournament.update({
     where: { id },
     data: { status: "IN_PROGRESS" },
   });
 
-  // Auto-register with Riot so the tournament is ready to issue per-match codes.
-  // This is fire-and-forget: a Riot outage shouldn't block the bracket generation,
-  // but we log if something goes wrong so the organizer can re-try.
+  // Auto-register with Riot for League of Legends
   if (isLeagueOfLegends) {
     try {
       await ensureRiotTournament(id);
@@ -154,5 +233,5 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     }
   }
 
-  return NextResponse.json({ rounds: createdRounds }, { status: 201 });
+  return NextResponse.json({ rounds: [...roundIdMap.values()] }, { status: 201 });
 }

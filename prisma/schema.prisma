@@ -310,6 +310,26 @@ model Match {
   /// The Riot webhook at /api/riot/callback resolves codes back to matches.
   riotCode        String?
 
+  /// Bracket phase — "UPPER", "LOWER", "FINAL", or "BRACKET_RESET"
+  phase           String?             @default("UPPER")
+
+  /// Self-references for bracket advancement.
+  /// Winner of this match fills the slot in the next match.
+  winnerNextMatchId   String?
+  winnerNextMatch     Match?  @relation("WinnerFlow", fields: [winnerNextMatchId], references: [id])
+  winnerPrevMatches   Match[] @relation("WinnerFlow")
+
+  /// The winner occupies slot 1 or 2 in the next match (null = final).
+  winnerNextSlot      Int?
+
+  /// Loser of this match drops into the next match (double elimination only).
+  loserNextMatchId    String?
+  loserNextMatch      Match?  @relation("LoserFlow", fields: [loserNextMatchId], references: [id])
+  loserPrevMatches    Match[] @relation("LoserFlow")
+
+  /// The loser occupies slot 1 or 2 in the next match (null = final / eliminated).
+  loserNextSlot       Int?
+
   round  TournamentRound @relation(fields: [roundId], references: [id])
   winner Team?           @relation("MatchWinner", fields: [winnerId], references: [id])
 
@@ -318,6 +338,8 @@ model Match {
   playerMatchHistory PlayerMatchHistory[]
 
   @@index([riotCode])
+  @@index([winnerNextMatchId])
+  @@index([loserNextMatchId])
 }
 
 model MatchResult {
