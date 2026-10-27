@@ -1,12 +1,13 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import type { Prisma } from "@/generated/prisma/client";
 
 export async function GET(req: Request, { params }: { params: Promise<{ userId: string }> }) {
   const { userId } = await params;
   const { searchParams } = new URL(req.url);
   const game = searchParams.get("game");
 
-  const where: any = { userId };
+  const where: Prisma.MatchResultWhereInput = { userId };
   if (game) where.match = { round: { tournament: { game } } };
 
   const results = await prisma.matchResult.findMany({

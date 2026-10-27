@@ -17,9 +17,16 @@ const PUBLIC_EXACT = new Set([
   "/free-agents",
   // El webhook de Riot hace POST sin cookie de sesión.
   "/api/riot/callback",
+  // Vitrina pública: agentes libres.
+  "/api/free-agents",
 ]);
 
 const PUBLIC_PREFIXES = ["/api/auth", "/players"];
+
+/** Premios por torneo: vitrina pública (la ficha y /prizes la pintan). */
+function isPublicPrizeApi(pathname: string): boolean {
+  return /^\/api\/tournaments\/[^/]+\/prizes(\/.*)?$/.test(pathname);
+}
 
 function isPublicTournamentPath(pathname: string): boolean {
   if (pathname === "/tournaments") return true;
@@ -51,6 +58,7 @@ export function middleware(req: NextRequest) {
   const isPublic =
     PUBLIC_EXACT.has(pathname) ||
     PUBLIC_PREFIXES.some((p) => pathname.startsWith(p)) ||
+    isPublicPrizeApi(pathname) ||
     isPublicTournamentPath(pathname);
 
   if (isPublic) return NextResponse.next();
