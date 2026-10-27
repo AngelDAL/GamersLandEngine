@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import {
   UserPlus, CheckCircle, LogIn, Swords, Users,
-  ArrowRight, Trophy, Loader2, X, Clock,
+  Loader2, X, Clock,
 } from "lucide-react";
 import Link from "next/link";
 
@@ -83,8 +83,6 @@ export function TournamentDetailClient({
       : deadlinePassed
         ? "Fecha límite vencida"
         : null;
-
-  const resolveName = (id: string) => allParticipants.find((p) => p.id === id)?.name || id.slice(0, 8);
 
   // Busca el próximo partido del usuario (sin memo: los arreglos de props se
   // reconstruyen en cada petición y React Compiler no puede preservarlo).
@@ -208,80 +206,6 @@ export function TournamentDetailClient({
           </Card>
         )}
 
-        {/* Quick bracket preview */}
-        <Card className="p-5">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="font-bold text-gold flex items-center gap-2">
-              <Trophy className="w-5 h-5" />
-              {tournamentStatus === "COMPLETED" ? "Resultados del torneo" : "Bracket en vivo"}
-            </h3>
-            <Link href={`/tournaments/${tournamentId}/bracket`}
-              className="inline-flex items-center gap-1 text-sm text-gold hover:underline">
-              Ver completo <ArrowRight className="w-4 h-4" />
-            </Link>
-          </div>
-          <div className="overflow-x-auto pb-2 -mx-4 sm:mx-0">
-            <div className="flex gap-3 sm:gap-5 px-4 sm:px-0 min-w-max">
-              {rounds.map((round) => (
-                <div key={round.id} className="flex flex-col gap-2 min-w-[180px] sm:min-w-[220px]">
-                  <p className="text-[10px] font-black text-gold uppercase tracking-widest text-center mb-1">
-                    Ronda {round.roundNumber}
-                  </p>
-                  {round.matches.map((match) => {
-                    const t1Name = resolveName(match.team1Id || "");
-                    const t2Name = resolveName(match.team2Id || "");
-                    const wsDetail = match.winnerId
-                      ? (match.winnerId === match.team1Id ? "team1" as const : "team2" as const)
-                      : (match.score1 ?? 0) > (match.score2 ?? 0)
-                        ? "team1" as const
-                        : (match.score2 ?? 0) > (match.score1 ?? 0)
-                          ? "team2" as const
-                          : null;
-                    const isUser = session?.id
-                      ? (isTeamBased
-                          ? match.team1Id === userTeamMember?.team?.id || match.team2Id === userTeamMember?.team?.id
-                          : match.team1Id === session.id || match.team2Id === session.id)
-                      : false;
-                    return (
-                      <div key={match.id} className={`bg-background border rounded-lg p-2.5 sm:p-3 text-xs transition-colors ${
-                        wsDetail
-                          ? "border-green-500/30"
-                          : isUser
-                            ? "border-gold/50 bg-gold/5 ring-1 ring-gold/30"
-                            : "border-border"
-                      }`}>
-                        <p className={`font-bold truncate text-sm ${
-                          wsDetail === "team1" ? "text-green-400" :
-                          isUser && match.team1Id === (isTeamBased ? userTeamMember?.team?.id : session?.id) ? "text-gold" : ""
-                        }`}>
-                          {match.team1Id ? t1Name : "---"}
-                        </p>
-                        <div className="flex items-center gap-1.5 text-[10px] text-muted my-1.5">
-                          <div className="flex-1 h-px bg-border" />
-                          <span className={match.status === "COMPLETED" ? "text-green-400 font-bold" : ""}>
-                            {match.status === "COMPLETED" ? `${match.score1 ?? 0} - ${match.score2 ?? 0}` : "VS"}
-                          </span>
-                          <div className="flex-1 h-px bg-border" />
-                        </div>
-                        <p className={`font-bold truncate text-sm ${
-                          wsDetail === "team2" ? "text-green-400" :
-                          isUser && match.team2Id === (isTeamBased ? userTeamMember?.team?.id : session?.id) ? "text-gold" : ""
-                        }`}>
-                          {match.team2Id ? t2Name : "---"}
-                        </p>
-                        {match.scheduledAt && (
-                          <p className="text-[8px] text-muted mt-1 text-center">
-                            {new Date(match.scheduledAt).toLocaleDateString("es-MX", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
-                          </p>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              ))}
-            </div>
-          </div>
-        </Card>
       </div>
     );
   }
