@@ -16,7 +16,7 @@ export async function GET(req: Request) {
 
   const user = await prisma.user.findUnique({
     where: { username: username.trim() },
-    select: { role: true, adminPassword: true },
+    select: { role: true },
   });
 
   if (!user) {
@@ -29,6 +29,5 @@ export async function GET(req: Request) {
     exists: true,
     role: user.role,
     needsPassword,
-    hasDefault: needsPassword && !user.adminPassword,
   });
 }

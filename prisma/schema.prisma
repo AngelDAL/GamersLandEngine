@@ -92,7 +92,7 @@ model User {
   resetToken        String?
   resetTokenExpires DateTime?
   role           Role     @default(PLAYER)
-  adminPassword  String?
+
   qrCode         String?
   avatarUrl      String?
   createdAt      DateTime @default(now())
@@ -198,8 +198,8 @@ model TeamMember {
   message String?      @db.Text
   lane    String?      // "TOP", "JUNGLE", "MID", "ADC", "SUPPORT"
 
-  user User @relation(fields: [userId], references: [id])
-  team Team @relation(fields: [teamId], references: [id])
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  team Team @relation(fields: [teamId], references: [id], onDelete: Cascade)
 
   @@unique([userId, teamId])
 }
@@ -244,8 +244,8 @@ model TournamentOrganizer {
   tournamentId String
   userId       String
 
-  tournament Tournament @relation(fields: [tournamentId], references: [id])
-  user       User       @relation(fields: [userId], references: [id])
+  tournament Tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([tournamentId, userId])
 }
@@ -261,9 +261,9 @@ model TournamentRegistration {
   registeredBy String?
   createdAt    DateTime           @default(now())
 
-  tournament Tournament @relation(fields: [tournamentId], references: [id])
-  user       User       @relation(fields: [userId], references: [id])
-  team       Team?      @relation(fields: [teamId], references: [id])
+  tournament Tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  team       Team?      @relation(fields: [teamId], references: [id], onDelete: SetNull)
 
   @@unique([tournamentId, userId])
 }
@@ -274,8 +274,8 @@ model TournamentTeam {
   teamId       String
   seed         Int?
 
-  tournament Tournament @relation(fields: [tournamentId], references: [id])
-  team       Team       @relation(fields: [teamId], references: [id])
+  tournament Tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  team       Team       @relation(fields: [teamId], references: [id], onDelete: Cascade)
 
   @@unique([tournamentId, teamId])
 }
@@ -286,7 +286,7 @@ model TournamentRound {
   roundNumber  Int
   status       RoundStatus @default(PENDING)
 
-  tournament Tournament @relation(fields: [tournamentId], references: [id])
+  tournament Tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
   matches    Match[]
 }
 
@@ -316,7 +316,7 @@ model Match {
   /// Self-references for bracket advancement.
   /// Winner of this match fills the slot in the next match.
   winnerNextMatchId   String?
-  winnerNextMatch     Match?  @relation("WinnerFlow", fields: [winnerNextMatchId], references: [id])
+  winnerNextMatch     Match?  @relation("WinnerFlow", fields: [winnerNextMatchId], references: [id], onDelete: SetNull)
   winnerPrevMatches   Match[] @relation("WinnerFlow")
 
   /// The winner occupies slot 1 or 2 in the next match (null = final).
@@ -324,14 +324,14 @@ model Match {
 
   /// Loser of this match drops into the next match (double elimination only).
   loserNextMatchId    String?
-  loserNextMatch      Match?  @relation("LoserFlow", fields: [loserNextMatchId], references: [id])
+  loserNextMatch      Match?  @relation("LoserFlow", fields: [loserNextMatchId], references: [id], onDelete: SetNull)
   loserPrevMatches    Match[] @relation("LoserFlow")
 
   /// The loser occupies slot 1 or 2 in the next match (null = final / eliminated).
   loserNextSlot       Int?
 
-  round  TournamentRound @relation(fields: [roundId], references: [id])
-  winner Team?           @relation("MatchWinner", fields: [winnerId], references: [id])
+  round  TournamentRound @relation(fields: [roundId], references: [id], onDelete: Cascade)
+  winner Team?           @relation("MatchWinner", fields: [winnerId], references: [id], onDelete: SetNull)
 
   results     MatchResult[]
   teamResults TeamMatchResult[]
@@ -351,8 +351,8 @@ model MatchResult {
   score   Int?
   stats   Json?
 
-  match Match @relation(fields: [matchId], references: [id])
-  user  User  @relation(fields: [userId], references: [id])
+  match Match @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 model TeamMatchResult {
@@ -362,8 +362,8 @@ model TeamMatchResult {
   result  TeamMatchResultEnum
   score   Int?
 
-  match Match @relation(fields: [matchId], references: [id])
-  team  Team  @relation(fields: [teamId], references: [id])
+  match Match @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  team  Team  @relation(fields: [teamId], references: [id], onDelete: Cascade)
 }
 
 model Prize {
@@ -379,8 +379,8 @@ model Prize {
   maxClaims    Int?
   createdAt    DateTime  @default(now())
 
-  tournament Tournament @relation(fields: [tournamentId], references: [id])
-  sponsor    User?      @relation("SponsorPrizes", fields: [sponsorId], references: [id])
+  tournament Tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  sponsor    User?      @relation("SponsorPrizes", fields: [sponsorId], references: [id], onDelete: SetNull)
   claims     PrizeClaim[]
 }
 
@@ -392,8 +392,8 @@ model PrizeClaim {
   notes     String?
   claimedAt DateTime @default(now())
 
-  prize Prize @relation(fields: [prizeId], references: [id])
-  user  User  @relation(fields: [userId], references: [id])
+  prize Prize @relation(fields: [prizeId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
   clerk User  @relation("ClerkClaims", fields: [claimedBy], references: [id])
 
   @@unique([prizeId, userId])
@@ -418,8 +418,8 @@ model ChatMessage {
   imageUrl  String?
   createdAt DateTime @default(now())
 
-  room   ChatRoom @relation(fields: [roomId], references: [id])
-  sender User     @relation(fields: [senderId], references: [id])
+  room   ChatRoom @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  sender User     @relation(fields: [senderId], references: [id], onDelete: Cascade)
 }
 
 model Notification {
@@ -433,5 +433,5 @@ model Notification {
   redirectUrl String?
   createdAt   DateTime @default(now())
 
-  user User @relation(fields: [userId], references: [id])
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 }

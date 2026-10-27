@@ -36,6 +36,9 @@ yarn-error.log*
 # archivos subidos en tiempo de ejecución (avatares, banners, chat)
 /public/uploads/
 
+# briefs temporales de orquestación (no se versionan)
+/.briefs/
+
 # vercel
 .vercel
 
