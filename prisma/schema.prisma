@@ -6,12 +6,13 @@ generator client {
 datasource db {
   provider = "mysql"
 }
-
 enum Role {
   ADMIN
   ORGANIZER
   PLAYER
   SPONSOR
+  EXPOSITOR
+  EJECUTIVO
 }
 
 enum BracketType {
@@ -40,6 +41,7 @@ enum MemberStatus {
   PENDING
   ACTIVE
   REJECTED
+  REQUEST
 }
 
 enum MatchStatus {
@@ -83,10 +85,27 @@ enum PrizeType {
 model User {
   id             String   @id @default(uuid())
   username       String   @unique
+  email          String?  @unique
+  passwordHash   String?
+  emailVerified  DateTime?
+  verificationToken String?
+  resetToken        String?
+  resetTokenExpires DateTime?
   role           Role     @default(PLAYER)
+  adminPassword  String?
   qrCode         String?
   avatarUrl      String?
   createdAt      DateTime @default(now())
+
+  riotGameName           String?   // "Quieto"
+  riotTagLine            String?   // "Compadre"
+  riotRegion             String?   // platform code, e.g. "la1"
+  riotPuuid              String?   @unique
+  riotSummonerId         String?
+  riotIconId             Int?      // profile icon id
+  riotLinkedAt           DateTime?
+  riotProfileRefreshedAt DateTime?
+  riotSkinSeed           Int?      // sticky random seed for splash art
 
   memberships              TeamMember[]
   registrations            TournamentRegistration[]
@@ -99,6 +118,61 @@ model User {
   sponsorPrizes            Prize[]                  @relation("SponsorPrizes")
   clerkClaims              PrizeClaim[]             @relation("ClerkClaims")
   notifications            Notification[]
+  playerMatchHistory     PlayerMatchHistory[]
+}
+
+model RiotCache {
+  key       String   @id
+  value     String   @db.LongText
+  expiresAt DateTime
+  updatedAt DateTime @updatedAt
+
+  @@index([expiresAt])
+}
+
+model PlayerMatchHistory {
+  id                  String    @id @default(cuid())
+
+  userId              String?
+  user                User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  matchId             String
+  gameName            String?
+  tagLine             String?
+  region              String
+
+  queueId             Int
+  queueName           String
+  gameMode            String
+  gameStartTimestamp  DateTime
+  gameDurationMin     Int
+
+  championId          Int
+  championName        String
+  role                String?
+  win                 Boolean
+  kills               Int
+  deaths              Int
+  assists             Int
+  cs                  Int
+  csPerMin            Float
+  itemIds             String    @db.LongText
+  summoner1Perk       Int?
+  summoner2Perk       Int?
+
+  isTournament        Boolean   @default(false)
+  tournamentId        String?
+  matchGamersLandId   String?
+  tournament          Tournament? @relation(fields: [tournamentId], references: [id], onDelete: SetNull)
+  matchGamersLand     Match?      @relation(fields: [matchGamersLandId], references: [id], onDelete: SetNull)
+
+  createdAt           DateTime  @default(now())
+
+  @@unique([userId, matchId])
+  @@index([userId, gameStartTimestamp(sort: Desc)])
+  @@index([tournamentId])
+  @@index([matchId])
+  @@index([isTournament, gameStartTimestamp(sort: Desc)])
 }
 
 model Team {
@@ -122,6 +196,7 @@ model TeamMember {
   teamId  String
   status  MemberStatus @default(PENDING)
   message String?      @db.Text
+  lane    String?      // "TOP", "JUNGLE", "MID", "ADC", "SUPPORT"
 
   user User @relation(fields: [userId], references: [id])
   team Team @relation(fields: [teamId], references: [id])
@@ -133,6 +208,9 @@ model Tournament {
   id                   String           @id @default(uuid())
   name                 String
   game                 String
+  /// Riot platform code (la1, na1, euw1, etc.) — the region this tournament's
+  /// Riot matches are played in. Null for non-Riot games.
+  region               String?
   description          String?          @db.Text
   entryFee             Decimal?         @default(0)
   maxTeams             Int
@@ -145,9 +223,12 @@ model Tournament {
   registrationDeadline DateTime?
   location             String?
   rules                String?          @db.Text
-  imageUrl             String?
+  imageUrl             String?          @db.Text
   createdAt            DateTime         @default(now())
   createdById          String
+  riotProviderId       Int?
+  riotTournamentId     Int?
+  riotMode             String?            @default("stub")
 
   createdBy      User                    @relation("TournamentCreator", fields: [createdById], references: [id])
   organizers     TournamentOrganizer[]
@@ -155,6 +236,7 @@ model Tournament {
   rounds         TournamentRound[]
   prizes         Prize[]
   tournamentTeams TournamentTeam[]
+  playerMatchHistory PlayerMatchHistory[]
 }
 
 model TournamentOrganizer {
@@ -175,6 +257,7 @@ model TournamentRegistration {
   teamId       String?
   status       RegistrationStatus @default(PENDING)
   paid         Boolean            @default(false)
+  checkedInAt  DateTime?
   registeredBy String?
   createdAt    DateTime           @default(now())
 
@@ -222,12 +305,41 @@ model Match {
   startedAt       DateTime?
   endedAt         DateTime?
   log             String?     @db.Text
+  /// Riot tournament code assigned to this match. Each match has its own
+  /// code that the participating team captains use in the LoL tournament client.
+  /// The Riot webhook at /api/riot/callback resolves codes back to matches.
+  riotCode        String?
+
+  /// Bracket phase — "UPPER", "LOWER", "FINAL", or "BRACKET_RESET"
+  phase           String?             @default("UPPER")
+
+  /// Self-references for bracket advancement.
+  /// Winner of this match fills the slot in the next match.
+  winnerNextMatchId   String?
+  winnerNextMatch     Match?  @relation("WinnerFlow", fields: [winnerNextMatchId], references: [id])
+  winnerPrevMatches   Match[] @relation("WinnerFlow")
+
+  /// The winner occupies slot 1 or 2 in the next match (null = final).
+  winnerNextSlot      Int?
+
+  /// Loser of this match drops into the next match (double elimination only).
+  loserNextMatchId    String?
+  loserNextMatch      Match?  @relation("LoserFlow", fields: [loserNextMatchId], references: [id])
+  loserPrevMatches    Match[] @relation("LoserFlow")
+
+  /// The loser occupies slot 1 or 2 in the next match (null = final / eliminated).
+  loserNextSlot       Int?
 
   round  TournamentRound @relation(fields: [roundId], references: [id])
   winner Team?           @relation("MatchWinner", fields: [winnerId], references: [id])
 
   results     MatchResult[]
   teamResults TeamMatchResult[]
+  playerMatchHistory PlayerMatchHistory[]
+
+  @@index([riotCode])
+  @@index([winnerNextMatchId])
+  @@index([loserNextMatchId])
 }
 
 model MatchResult {

@@ -3,13 +3,12 @@
 import { useState, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { RegisterModal } from "./_components/RegisterModal";
-import { PlayerQR } from "@/components/player/PlayerQR";
 import { MatchCountdown } from "@/components/notifications/MatchCountdown";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import {
   UserPlus, CheckCircle, LogIn, Swords, Users,
-  QrCode, Send, ArrowRight, Calendar, Trophy,
+  ArrowRight, Calendar, Trophy, Loader2,
 } from "lucide-react";
 import Link from "next/link";
 
@@ -31,6 +30,7 @@ type Props = {
   tournamentId: string;
   tournamentStatus: string;
   tournamentName: string;
+  eventDate: string;
   session: { id: string; name: string; role: string } | null;
   registration: any;
   teams: any[];
@@ -42,12 +42,23 @@ type Props = {
 };
 
 export function TournamentDetailClient({
-  tournamentId, tournamentStatus, tournamentName, session, registration,
+  tournamentId, tournamentStatus, tournamentName, eventDate, session, registration,
   teams, freeAgents, userTeamMember, isTeamBased, rounds, allParticipants,
 }: Props) {
   const router = useRouter();
   const [showRegisterModal, setShowRegisterModal] = useState(false);
-  const [actionStep, setActionStep] = useState<"idle" | "qr">("idle");
+  const [registrationLoading, setRegistrationLoading] = useState(false);
+  const [checkinLoading, setCheckinLoading] = useState(false);
+
+  const isEventDay = useMemo(() => {
+    const today = new Date();
+    const event = new Date(eventDate);
+    return (
+      today.getFullYear() === event.getFullYear() &&
+      today.getMonth() === event.getMonth() &&
+      today.getDate() === event.getDate()
+    );
+  }, [eventDate]);
 
   const isOpen = tournamentStatus === "OPEN_REGISTRATION";
   const isLive = tournamentStatus === "IN_PROGRESS" || tournamentStatus === "COMPLETED";
@@ -83,9 +94,37 @@ export function TournamentDetailClient({
     return null;
   }, [rounds, session?.id, isTeamBased, userTeamMember, allParticipants]);
 
-  const handleStart = () => {
-    if (!session) { setShowRegisterModal(true); }
-    else { setActionStep("qr"); }
+  const handleAutoRegister = async () => {
+    setRegistrationLoading(true);
+    try {
+      await fetch(`/api/tournaments/${tournamentId}/registrations`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      router.refresh();
+    } finally {
+      setRegistrationLoading(false);
+    }
+  };
+
+  const handleCheckin = async () => {
+    setCheckinLoading(true);
+    try {
+      await fetch(`/api/tournaments/${tournamentId}/check-in`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      router.refresh();
+    } finally {
+      setCheckinLoading(false);
+    }
+  };
+
+  const formatCheckinTime = (dateStr: string) => {
+    const d = new Date(dateStr);
+    return d.toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit" });
   };
 
   // ── BRACKET IN PROGRESS / COMPLETED ──
@@ -118,12 +157,8 @@ export function TournamentDetailClient({
               </div>
             </div>
             {nextMatch.scheduledAt && (
-              <div className="flex flex-wrap items-center justify-center gap-4 text-xs text-muted pt-3 border-t border-border">
-                <span className="flex items-center gap-1">
-                  <Calendar className="w-3.5 h-3.5" />
-                  {new Date(nextMatch.scheduledAt).toLocaleDateString("es-MX", { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
-                </span>
-                <MatchCountdown scheduledAt={nextMatch.scheduledAt} status={nextMatch.status} />
+              <div className="mt-4">
+                <MatchCountdown scheduledAt={nextMatch.scheduledAt} status={nextMatch.status} large />
               </div>
             )}
             <div className="mt-4 flex gap-2 justify-center">
@@ -229,36 +264,27 @@ export function TournamentDetailClient({
                   {session ? (
                     <>
                       <p className="font-bold text-foreground">¿Quieres participar?</p>
-                      <p className="text-xs text-muted mt-0.5">Genera tu QR y preséntalo con un organizador</p>
+                      <p className="text-xs text-muted mt-0.5">Regístrate directamente en este torneo</p>
                     </>
                   ) : (
                     <>
                       <p className="font-bold text-foreground">¿Quieres jugar?</p>
-                      <p className="text-xs text-muted mt-0.5">Crea una cuenta y genera tu código QR</p>
+                      <p className="text-xs text-muted mt-0.5">Crea una cuenta y participa</p>
                     </>
                   )}
                 </div>
               </div>
-              <Button onClick={handleStart} size="lg" className="shrink-0 w-full sm:w-auto">
-                {session ? <QrCode className="w-5 h-5" /> : <UserPlus className="w-5 h-5" />}
-                {session ? "GENERAR QR" : "CREAR CUENTA"}
-              </Button>
-            </div>
-          </Card>
-        )}
-
-        {/* QR to show organizer */}
-        {session && !isRegistered && actionStep === "qr" && (
-          <Card className="p-5 text-center">
-            <div className="w-14 h-14 rounded-full bg-gold/10 flex items-center justify-center mx-auto mb-3">
-              <Send className="w-7 h-7 text-gold" />
-            </div>
-            <h3 className="font-bold text-lg text-gold mb-1">¡Listo!</h3>
-            <p className="text-sm text-muted mb-1">Preséntale este QR al organizador</p>
-            <p className="text-xs text-muted mb-5">Él escaneará tu código y confirmará tu registro</p>
-            <PlayerQR userId={session.id} username={session.name} size={180} />
-            <div className="flex gap-3 justify-center mt-5">
-              <button onClick={() => setActionStep("idle")} className="px-4 py-2 border border-border text-muted rounded-xl text-xs hover:border-gold/50">Volver</button>
+              {session ? (
+                <Button onClick={handleAutoRegister} disabled={registrationLoading} size="lg" className="shrink-0 w-full sm:w-auto">
+                  {registrationLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : <UserPlus className="w-5 h-5" />}
+                  {registrationLoading ? "REGISTRANDO..." : "REGISTRARME AHORA"}
+                </Button>
+              ) : (
+                <Button onClick={() => setShowRegisterModal(true)} size="lg" className="shrink-0 w-full sm:w-auto">
+                  <UserPlus className="w-5 h-5" />
+                  CREAR CUENTA
+                </Button>
+              )}
             </div>
           </Card>
         )}
@@ -266,6 +292,42 @@ export function TournamentDetailClient({
         {/* Registered: show status */}
         {isRegistered && (
           <>
+            {/* Check-in & payment status */}
+            <div className="flex flex-wrap items-center gap-2">
+              {/* Check-in */}
+              {registration?.checkedInAt ? (
+                <span className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-green-500/10 border border-green-500/30 text-green-400">
+                  ✅ Check-in a las {formatCheckinTime(registration.checkedInAt)}
+                </span>
+              ) : isEventDay ? (
+                <button
+                  onClick={handleCheckin}
+                  disabled={checkinLoading}
+                  className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-gold/10 border border-gold/30 text-gold hover:bg-gold/20 transition-colors disabled:opacity-50"
+                >
+                  {checkinLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "✅ Hacer check-in"}
+                </button>
+              ) : (
+                <span className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-muted/10 border border-border text-muted">
+                  🎫 Check-in disponible el día del evento
+                </span>
+              )}
+
+              {/* Payment badge (only show if paid) */}
+              {registration?.paid && (
+                <span className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-green-500/10 border border-green-500/30 text-green-400">
+                  ✅ Cuota pagada
+                </span>
+              )}
+            </div>
+
+            {/* Payment info (when not paid) */}
+            {!registration?.paid && (
+              <p className="text-xs text-muted mt-2">
+                💰 La cuota de entrada se paga en el local o a través de la pasarela de pago (próximamente)
+              </p>
+            )}
+
             {nextMatch ? (
               <Card className="p-5 border-gold/30">
                 <div className="flex items-center gap-2 mb-4">
@@ -291,12 +353,8 @@ export function TournamentDetailClient({
                   </div>
                 </div>
                 {nextMatch.scheduledAt && (
-                  <div className="flex flex-wrap items-center justify-center gap-4 text-xs text-muted pt-3 border-t border-border">
-                    <span className="flex items-center gap-1">
-                      <Calendar className="w-3.5 h-3.5" />
-                      {new Date(nextMatch.scheduledAt).toLocaleDateString("es-MX", { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
-                    </span>
-                    <MatchCountdown scheduledAt={nextMatch.scheduledAt} status={nextMatch.status} />
+                  <div className="mt-4">
+                    <MatchCountdown scheduledAt={nextMatch.scheduledAt} status={nextMatch.status} large />
                   </div>
                 )}
                 <div className="mt-4 flex gap-2 justify-center">
@@ -313,6 +371,7 @@ export function TournamentDetailClient({
                 <p className="text-xs text-muted mt-1 mb-4">Aún no formas parte de un equipo</p>
                 <div className="flex gap-2 justify-center">
                   <a href="/teams/create" className="px-4 py-2 bg-gold text-background font-bold rounded-xl text-sm">Crear equipo</a>
+                  <Link href="/free-agents?tab=teams" className="px-4 py-2 border border-gold/50 text-gold font-bold rounded-xl text-sm hover:bg-gold/10 transition-colors">Buscar equipo</Link>
                 </div>
               </Card>
             ) : hasRounds ? (

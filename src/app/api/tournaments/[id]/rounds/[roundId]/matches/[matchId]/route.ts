@@ -144,23 +144,54 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     );
   }
 
-  // Propagate winner to next round
+  // ── Auto-advance using bracket connections ──
   if (data.status === "COMPLETED" && resolvedWinnerId) {
-    const nextRound = await prisma.tournamentRound.findFirst({
-      where: { tournamentId, roundNumber: match.round.roundNumber + 1 },
-      include: { matches: { orderBy: { bracketPosition: "asc" } } },
+    // Refresh match with its connection fields
+    const completedMatch = await prisma.match.findUnique({
+      where: { id: matchId },
+      include: {
+        winnerNextMatch: true,
+        loserNextMatch: true,
+      },
     });
 
-    if (nextRound) {
-      const pos = match.bracketPosition ?? 0;
-      const nextMatchIndex = Math.floor(pos / 2);
-      const nextMatch = nextRound.matches[nextMatchIndex];
-      if (nextMatch) {
-        const isLeftChild = pos % 2 === 0;
+    if (completedMatch) {
+      // Determine who the loser is
+      const loserId = completedMatch.team1Id === resolvedWinnerId
+        ? completedMatch.team2Id
+        : completedMatch.team1Id;
+
+      // Advance winner to next match slot
+      if (completedMatch.winnerNextMatchId && completedMatch.winnerNextSlot) {
+        const slotField = completedMatch.winnerNextSlot === 1 ? "team1Id" : "team2Id";
         await prisma.match.update({
-          where: { id: nextMatch.id },
-          data: isLeftChild ? { team1Id: resolvedWinnerId } : { team2Id: resolvedWinnerId },
+          where: { id: completedMatch.winnerNextMatchId },
+          data: { [slotField]: resolvedWinnerId },
         });
+      }
+
+      // Advance loser to losers bracket (double elim)
+      if (completedMatch.loserNextMatchId && completedMatch.loserNextSlot && loserId) {
+        const loserSlotField = completedMatch.loserNextSlot === 1 ? "team1Id" : "team2Id";
+        await prisma.match.update({
+          where: { id: completedMatch.loserNextMatchId },
+          data: { [loserSlotField]: loserId },
+        });
+      }
+
+      // If this was the GRAND FINAL and the lower bracket winner won,
+      // populate the bracket reset match with BOTH teams
+      if (completedMatch.phase === "FINAL") {
+        const winnerCameFromLower = resolvedWinnerId === completedMatch.team2Id;
+        if (winnerCameFromLower && completedMatch.loserNextMatchId) {
+          // Bracket reset: same teams replay
+          // team1 = GF loser (upper champion, already set via loserNextMatch)
+          // team2 = GF winner (lower champion, needs explicit setting)
+          await prisma.match.update({
+            where: { id: completedMatch.loserNextMatchId },
+            data: { team2Id: completedMatch.team2Id },
+          });
+        }
       }
     }
   }

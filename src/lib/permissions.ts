@@ -48,6 +48,29 @@ const rolePermissions: Record<Role, Permission[]> = {
     "upload:avatar",
     "scan:qr-info",
   ],
+  EXPOSITOR: [
+    "manage:tournaments",
+    "register:players",
+    "manage:brackets",
+    "manage:prizes",
+    "scan:qr-info",
+    "view:history-all",
+    "chat",
+    "upload:avatar",
+  ],
+  EJECUTIVO: [
+    "manage:tournaments",
+    "manage:all-tournaments",
+    "register:players",
+    "manage:brackets",
+    "manage:prizes",
+    "assign:prizes",
+    "scan:qr-info",
+    "scan:qr-prizes",
+    "view:history-all",
+    "chat",
+    "upload:avatar",
+  ],
 };
 
 export function hasPermission(role: Role, permission: Permission): boolean {

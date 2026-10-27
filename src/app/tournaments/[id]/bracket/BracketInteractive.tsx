@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useRef, useEffect } from "react";
+import { useState, useMemo, useRef, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -8,6 +8,7 @@ import { BracketSlot } from "@/components/tournament/BracketSlot";
 import { ParticipantPool } from "@/components/tournament/ParticipantPool";
 import { MatchChat } from "@/components/chat/MatchChat";
 import { MatchCountdown } from "@/components/notifications/MatchCountdown";
+import { RiotMatchCode } from "./RiotMatchCode";
 import {
   Swords, ArrowLeft, Check, Loader2,
   Trophy, Medal, XCircle, Clock, Calendar,
@@ -523,6 +524,17 @@ export function BracketInteractive({
                                 <span className="text-red-400/70 text-xs">{loserName}</span>
                               </div>
                             )}
+                          </div>
+                        )}
+
+                        {/* Riot Tournament Code (LoL only, when both teams present and not completed) */}
+                        {hasBoth && !isCompleted && (tournament.game ?? "").toUpperCase() === "LEAGUE_OF_LEGENDS" && (
+                          <div className="mt-2 pt-2 border-t border-border">
+                            <RiotMatchCode
+                              matchId={mId}
+                              userIsInMatch={userIsInMatch}
+                              canEdit={canEdit}
+                            />
                           </div>
                         )}
 

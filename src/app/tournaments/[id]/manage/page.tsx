@@ -56,6 +56,7 @@ export default async function ManageTournamentPage({ params }: { params: Promise
   const registrations = await prisma.tournamentRegistration.findMany({
     where: { tournamentId: id },
     include: { user: { select: { id: true, username: true, role: true, avatarUrl: true } } },
+    orderBy: { createdAt: "desc" },
   });
   const players = registrations.map((r) => r.user);
   const registeredUserIds = new Set(players.map((p) => p.id));
@@ -146,6 +147,15 @@ export default async function ManageTournamentPage({ params }: { params: Promise
       <ManageTournamentClient
         tournament={serialized}
         players={players}
+        registrations={registrations.map(r => ({
+          id: r.id,
+          userId: r.userId,
+          paid: r.paid,
+          checkedInAt: r.checkedInAt ? r.checkedInAt.toISOString() : null,
+          status: r.status,
+          createdAt: r.createdAt.toISOString(),
+          user: { id: r.user.id, username: r.user.username, avatarUrl: r.user.avatarUrl },
+        }))}
         allPlayers={allPlayers}
         organizers={orgUsers}
         teams={teams}

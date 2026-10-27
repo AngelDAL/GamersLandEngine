@@ -72,6 +72,7 @@ export default async function TournamentPage({ params }: { params: Promise<{ id:
   const userReg = session?.user?.id
     ? await prisma.tournamentRegistration.findUnique({
         where: { tournamentId_userId: { tournamentId: id, userId: session.user.id } },
+        select: { id: true, status: true, paid: true, checkedInAt: true },
       })
     : null;
   const userTeamMember = session?.user?.id
@@ -210,6 +211,7 @@ export default async function TournamentPage({ params }: { params: Promise<{ id:
           tournamentId={tournament.id}
           tournamentStatus={tournament.status}
           tournamentName={tournament.name}
+          eventDate={tournament.eventDate.toISOString()}
           session={session ? { id: session.user.id, name: session.user.name, role: session.user.role } : null}
           registration={userReg}
           teams={teams}

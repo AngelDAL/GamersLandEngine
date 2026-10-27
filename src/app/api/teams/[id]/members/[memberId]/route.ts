@@ -9,7 +9,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   }
 
   const { memberId } = await params;
-  const { status } = await req.json();
+  const { status, lane } = await req.json();
 
   const member = await prisma.teamMember.findUnique({
     where: { id: memberId },
@@ -27,9 +27,13 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     return NextResponse.json({ error: "No tienes permisos" }, { status: 403 });
   }
 
+  const data: any = {};
+  if (status !== undefined) data.status = status;
+  if (lane !== undefined) data.lane = lane;
+
   const updated = await prisma.teamMember.update({
     where: { id: memberId },
-    data: { status },
+    data,
   });
 
   return NextResponse.json(updated);

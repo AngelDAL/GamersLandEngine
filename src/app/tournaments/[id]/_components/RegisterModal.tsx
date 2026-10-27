@@ -13,7 +13,7 @@ type Props = {
 export function RegisterModal({ tournamentId, onClose }: Props) {
   const router = useRouter();
   const [username, setUsername] = useState("");
-  const [step, setStep] = useState<"login" | "choose" | "created">("login");
+  const [step, setStep] = useState<"login" | "created">("login");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -62,18 +62,11 @@ export function RegisterModal({ tournamentId, onClose }: Props) {
           <h2 className="text-2xl font-bold text-gold mb-2">¡Registrado!</h2>
           <p className="text-muted text-sm mb-6">
             Tu cuenta se ha creado y ya estás registrado en el torneo.
-            Ahora puedes crear un equipo o unirte a uno existente.
           </p>
           <div className="flex gap-3 justify-center">
             <button
-              onClick={() => { router.push(`/teams/create`); onClose(); }}
-              className="px-6 py-3 bg-gold text-background font-bold rounded-xl text-sm hover:bg-gold-hover"
-            >
-              Crear Equipo
-            </button>
-            <button
               onClick={() => { router.refresh(); onClose(); }}
-              className="px-6 py-3 border border-border text-muted rounded-xl text-sm hover:border-gold/50"
+              className="px-6 py-3 bg-gold text-background font-bold rounded-xl text-sm hover:bg-gold-hover"
             >
               Ver Torneo
             </button>
