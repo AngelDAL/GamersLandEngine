@@ -19,7 +19,7 @@ app.prepare().then(() => {
 
   initSocketServer(httpServer);
 
-  httpServer.listen(port, () => {
+  httpServer.listen(port, "127.0.0.1", () => {
     console.log(`> Ready on http://${hostname}:${port}`);
   });
 });

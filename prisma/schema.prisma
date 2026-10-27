@@ -121,7 +121,7 @@ model TeamMember {
   userId  String
   teamId  String
   status  MemberStatus @default(PENDING)
-  message String?
+  message String?      @db.Text
 
   user User @relation(fields: [userId], references: [id])
   team Team @relation(fields: [teamId], references: [id])
@@ -133,7 +133,7 @@ model Tournament {
   id                   String           @id @default(uuid())
   name                 String
   game                 String
-  description          String?
+  description          String?          @db.Text
   entryFee             Decimal?         @default(0)
   maxTeams             Int
   minTeams             Int              @default(4)
@@ -144,7 +144,7 @@ model Tournament {
   eventDate            DateTime
   registrationDeadline DateTime?
   location             String?
-  rules                String?
+  rules                String?          @db.Text
   imageUrl             String?
   createdAt            DateTime         @default(now())
   createdById          String
@@ -217,11 +217,11 @@ model Match {
   score2          Int?
   status          MatchStatus @default(PENDING)
   bracketPosition Int?
-  notes           String?
+  notes           String?     @db.Text
   scheduledAt     DateTime?
   startedAt       DateTime?
   endedAt         DateTime?
-  log             String?
+  log             String?     @db.Text
 
   round  TournamentRound @relation(fields: [roundId], references: [id])
   winner Team?           @relation("MatchWinner", fields: [winnerId], references: [id])
@@ -258,10 +258,10 @@ model Prize {
   id           String    @id @default(uuid())
   tournamentId String
   name         String
-  description  String?
+  description  String?    @db.Text
   type         PrizeType
   position     Int?
-  value        String?
+  value        String?    @db.Text
   sponsorId    String?
   imageUrl     String?
   maxClaims    Int?
@@ -302,7 +302,7 @@ model ChatMessage {
   id        String   @id @default(uuid())
   roomId    String
   senderId  String
-  content   String
+  content   String  @db.Text
   imageUrl  String?
   createdAt DateTime @default(now())
 
@@ -315,7 +315,7 @@ model Notification {
   userId    String
   type      String
   title     String
-  message   String
+  message   String  @db.Text
   matchId   String?
   read        Boolean  @default(false)
   redirectUrl String?

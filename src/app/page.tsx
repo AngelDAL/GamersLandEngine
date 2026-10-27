@@ -6,6 +6,7 @@ import {
   Sword, Crosshair, Zap, Target, Clock,
 } from "lucide-react";
 import { MatchCountdown } from "@/components/notifications/MatchCountdown";
+import { WelcomeHero } from "@/components/home/WelcomeHero";
 
 const gameConfig: Record<string, { icon: typeof Gamepad2; gradient: string; label: string }> = {
   LEAGUE_OF_LEGENDS: { icon: Sword, gradient: "from-blue-900/80 via-blue-800/40 to-transparent", label: "League of Legends" },
@@ -80,6 +81,8 @@ export default async function HomePage() {
 
   return (
     <div className="min-h-screen bg-background">
+      {/* First-impression welcome hero (dismissible) */}
+      <WelcomeHero tournamentCount={tournaments.length} hasSession={!!session?.user} />
       {/* Mini header */}
       <div className="border-b border-border bg-surface/50">
         <div className="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">

@@ -15,6 +15,7 @@ export function Navbar() {
 
   const mainLinks = [
     { href: "/tournaments", label: "Torneos", show: true },
+    { href: "/guia", label: "Cómo participar", show: true },
     { href: "/prizes", label: "Premios", show: role === "PLAYER" },
     { href: "/tournaments/create", label: "+ Crear Torneo", show: role === "ADMIN" || role === "ORGANIZER" },
   ].filter((l) => l.show);
@@ -34,6 +35,9 @@ export function Navbar() {
             <div className="hidden md:flex items-center gap-4 lg:gap-5 text-sm text-[#7B8FA1]">
               <Link href="/tournaments" className="hover:text-[#C8AA6E] transition-colors whitespace-nowrap">
                 Torneos
+              </Link>
+              <Link href="/guia" className="hover:text-[#C8AA6E] transition-colors whitespace-nowrap">
+                Cómo participar
               </Link>
               {role === "PLAYER" && (
                 <Link href="/prizes" className="hover:text-[#C8AA6E] transition-colors flex items-center gap-1 whitespace-nowrap">

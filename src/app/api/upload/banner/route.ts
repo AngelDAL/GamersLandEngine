@@ -57,6 +57,9 @@ export async function GET() {
     { url: "/banners/fortnite.svg", label: "Fortnite" },
     { url: "/banners/lol1v1.svg", label: "LoL 1v1" },
     { url: "/banners/default.svg", label: "Default" },
+    { url: "/covers/lol.jpg", label: "League of Legends (Arte)" },
+    { url: "/covers/lol1v1.jpg", label: "LoL 1v1 (Arte)" },
+    { url: "/covers/valorant.jpg", label: "Valorant (Arte)" },
   ];
 
   const uploaded = uploadedFiles.map((f) => ({

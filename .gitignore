@@ -33,6 +33,9 @@ yarn-error.log*
 # env files (can opt-in for committing if needed)
 .env*
 
+# archivos subidos en tiempo de ejecución (avatares, banners, chat)
+/public/uploads/
+
 # vercel
 .vercel
 
