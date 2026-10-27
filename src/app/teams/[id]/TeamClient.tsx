@@ -31,11 +31,10 @@ export function TeamClient({ teamId }: Props) {
   const dropdownRef = useRef<HTMLDivElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Fetch suggestions on input change (debounced)
+  // Fetch suggestions on input change (debounced). La limpieza de la lista
+  // cuando hay menos de 2 letras se hace en el onChange del input.
   useEffect(() => {
     if (mode !== "username" || search.length < 2) {
-      setSuggestions([]);
-      setShowSuggestions(false);
       return;
     }
     if (debounceRef.current) clearTimeout(debounceRef.current);
@@ -43,6 +42,13 @@ export function TeamClient({ teamId }: Props) {
       setFetching(true);
       try {
         const res = await fetch(`/api/users?q=${encodeURIComponent(search.trim())}&role=PLAYER`);
+        if (!res.ok) {
+          // El buscador público puede no estar disponible: no bloquea el modo QR
+          setSuggestions([]);
+          setShowSuggestions(false);
+          setFetching(false);
+          return;
+        }
         const users = await res.json();
         setSuggestions(Array.isArray(users) ? users.slice(0, 8) : []);
         setShowSuggestions(true);
@@ -117,10 +123,15 @@ export function TeamClient({ teamId }: Props) {
     setError("");
     setSuccess("");
 
-    const userRes = await fetch(`/api/users?q=${encodeURIComponent(search.trim())}`);
-    const users = await userRes.json();
+    let user: UserSuggestion | null = null;
+    try {
+      const userRes = await fetch(`/api/users?q=${encodeURIComponent(search.trim())}`);
+      if (userRes.ok) {
+        const users = await userRes.json();
+        user = Array.isArray(users) ? users[0] ?? null : null;
+      }
+    } catch { /* se intenta con el código QR más abajo */ }
 
-    let user = users[0];
     if (!user && search.includes("-")) {
       const qrRes = await fetch("/api/qr", {
         method: "POST",
@@ -134,7 +145,7 @@ export function TeamClient({ teamId }: Props) {
     }
 
     if (!user) {
-      setError("Usuario no encontrado. Verifica el username o código QR.");
+      setError("Usuario no encontrado. Verifica el nombre o el código QR.");
       setLoading(false);
       return;
     }
@@ -203,7 +214,7 @@ export function TeamClient({ teamId }: Props) {
           }`}
         >
           <Search className="w-3 h-3" />
-          Username
+          Nombre
         </button>
         <button
           onClick={() => { setMode("qr"); setSearch(""); setSuggestions([]); setShowSuggestions(false); }}
@@ -224,7 +235,15 @@ export function TeamClient({ teamId }: Props) {
               type="text"
               placeholder="Nombre de usuario..."
               value={search}
-              onChange={(e) => { setSearch(e.target.value); setSelectedIdx(-1); }}
+              onChange={(e) => {
+                const value = e.target.value;
+                setSearch(value);
+                setSelectedIdx(-1);
+                if (value.trim().length < 2) {
+                  setSuggestions([]);
+                  setShowSuggestions(false);
+                }
+              }}
               onFocus={() => { if (suggestions.length > 0) setShowSuggestions(true); }}
               onKeyDown={handleKeyDown}
               className="flex-1 px-3 py-2 bg-background border border-border rounded-lg text-sm text-foreground placeholder-muted focus:outline-none focus:border-gold"
@@ -267,7 +286,7 @@ export function TeamClient({ teamId }: Props) {
         <div className="flex gap-2 mb-2">
           <input
             type="text"
-            placeholder="Código QR o ID del jugador..."
+            placeholder="Código QR del jugador..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && addMember()}

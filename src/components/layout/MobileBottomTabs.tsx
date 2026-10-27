@@ -6,19 +6,18 @@ import { useSession, signOut } from "next-auth/react";
 import { useEffect, useState } from "react";
 import {
   Trophy,
-  Users,
   User,
+  Users,
   Menu,
   X,
   Home,
-  MessageCircle,
   Gamepad2,
   Settings,
   QrCode,
   Award,
-  Bell,
   LogOut,
   Shield,
+  UserSearch,
 } from "lucide-react";
 import { QRDrawer } from "@/components/player/QRDrawer";
 
@@ -42,9 +41,10 @@ export function MobileBottomTabs() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [showQR, setShowQR] = useState(false);
 
-  // Close on route change
+  // Close on route change (setTimeout(0): fuera del cuerpo síncrono del efecto)
   useEffect(() => {
-    setDrawerOpen(false);
+    const id = setTimeout(() => setDrawerOpen(false), 0);
+    return () => clearTimeout(id);
   }, [pathname]);
 
   // Lock body scroll while drawer is open (but keep main page scrollable
@@ -74,7 +74,9 @@ export function MobileBottomTabs() {
     ? "/auth/login"
     : role === "ADMIN" || role === "ORGANIZER"
       ? "/dashboard/admin"
-      : "/dashboard/player";
+      : role === "SPONSOR"
+        ? "/dashboard/sponsor"
+        : "/dashboard/player";
 
   const isProfileActive = () => {
     if (!session) return pathname.startsWith("/auth/login");
@@ -91,36 +93,28 @@ export function MobileBottomTabs() {
 
   const closeDrawer = () => setDrawerOpen(false);
 
-  // Drawer items — order matters
+  // Drawer items — order matters (espejo del menú real del Navbar)
   const drawerItems: DrawerItem[] = [
     { kind: "link", href: "/", label: "Inicio", icon: Home },
-    {
-      kind: "link",
-      href: "/dashboard/player",
-      label: "Mis Torneos",
-      icon: Gamepad2,
-    },
-    { kind: "link", href: "/teams", label: "Equipos", icon: Users },
-    { kind: "link", href: "/prizes", label: "Premios", icon: Award },
+    { kind: "link", href: "/free-agents", label: "Agentes libres", icon: UserSearch },
+    { kind: "link", href: "/guia", label: "Cómo participar", icon: Gamepad2 },
   ];
+  if (session) {
+    drawerItems.push({ kind: "link", href: "/prizes", label: "Premios", icon: Award });
+  }
 
   // Auth-only drawer items
   if (session) {
     drawerItems.push({
-      kind: "action",
-      label: "Notificaciones",
-      icon: Bell,
-      onClick: () => {
-        closeDrawer();
-        // The header NotificationBell handles its own dropdown; close here
-        // and let the user open it from the header. We just give a hint:
-        window.dispatchEvent(new CustomEvent("gamersland:focus-notifications"));
-      },
+      kind: "link",
+      href: profileHref,
+      label: "Mi panel",
+      icon: Settings,
     });
-    if (session.user?.id) {
+    if (session.user?.id && role === "PLAYER") {
       drawerItems.push({
         kind: "action",
-        label: "Mi QR",
+        label: "Mi código QR",
         icon: QrCode,
         onClick: () => {
           closeDrawer();
@@ -129,12 +123,6 @@ export function MobileBottomTabs() {
         },
       });
     }
-    drawerItems.push({
-      kind: "link",
-      href: profileHref,
-      label: "Ajustes",
-      icon: Settings,
-    });
     if (role === "ADMIN" || role === "ORGANIZER") {
       drawerItems.push({
         kind: "link",
@@ -144,17 +132,11 @@ export function MobileBottomTabs() {
       });
     }
   } else {
-    // Visitors also get a Messages entry pointing to auth so they sign in
+    // Visitors get a direct entry point to sign in
     drawerItems.push({
       kind: "link",
       href: "/auth/login",
-      label: "Mensajes",
-      icon: MessageCircle,
-    });
-    drawerItems.push({
-      kind: "link",
-      href: "/auth/login",
-      label: "Ajustes",
+      label: "Entrar",
       icon: Settings,
     });
   }

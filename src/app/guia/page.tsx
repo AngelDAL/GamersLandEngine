@@ -1,73 +1,88 @@
 import Link from "next/link";
 import {
   LogIn, Users, Trophy, ClipboardCheck, CalendarCheck, ArrowRight,
-  Swords, Gamepad2, HelpCircle, Lightbulb, Medal,
+  Swords, Gamepad2, HelpCircle, Lightbulb, Medal, UserSearch, Gift,
 } from "lucide-react";
 
 const steps = [
   {
     n: "1",
     icon: LogIn,
-    title: "Entra con tu username",
-    body: "No necesitas contraseña ni email. En la página de entrada escribe tu nombre de jugador; si no existe, tu cuenta se crea sola. Así quedas registrado en el sistema.",
+    title: "Entra con tu nombre de jugador",
+    body: "No necesitas contraseña ni correo. Escribe tu nombre de jugador en la pantalla de inicio; si no existe, tu cuenta se crea sola.",
     cta: { href: "/auth/login", label: "Entrar" },
   },
   {
     n: "2",
     icon: Users,
     title: "Arma tu equipo (si el torneo es por equipo)",
-    body: "La mayoría de torneos son en equipo (5v5, squad, etc.). Crea tu team y agrega a tus compas, o únete a un equipo existente. Para los torneos 1v1 este paso no hace falta.",
-    cta: { href: "/teams/create", label: "Crear equipo" },
+    body: "Crea tu equipo y agrega a tus compañeros por nombre o código QR, o únete a uno existente desde la sección de Agentes libres. En los torneos 1v1 este paso no hace falta.",
+    cta: { href: "/free-agents", label: "Ver agentes libres" },
   },
   {
     n: "3",
     icon: Trophy,
     title: "Elige tu torneo",
-    body: "Entra a Torneos y abre uno con estado “Abierto”. Revisa la modalidad (equipo o 1v1), el juego, fecha, cupo (X equipos máximo) y los premios. ¡Cupos limitados!",
+    body: "Entra a Torneos y abre uno con estado “Abierto”. Revisa la modalidad (equipo o 1v1), el juego, la fecha, el cupo y los premios. Los cupos son limitados.",
     cta: { href: "/tournaments", label: "Ver torneos" },
   },
   {
     n: "4",
     icon: ClipboardCheck,
-    title: "Regístrate",
-    body: "En la página del torneo pulsa el botón de registro. Si es por equipo, elige tu team; si es individual, se registra tu cuenta. El registro queda pendiente hasta que confirmen.",
+    title: "Manda tu solicitud de inscripción",
+    body: "En la página del torneo pulsa el botón de registro. Si es por equipo, elige tu equipo; si es individual, se registra tu cuenta. Tu solicitud queda “Pendiente” hasta que el organizador la revise.",
   },
   {
     n: "5",
     icon: CalendarCheck,
-    title: "Confirma tu lugar y agenda",
-    body: "Si el torneo tiene inscripción ($), confirma el pago con el organizador. Tu registro debe quedar “Confirmado” y lo verás en Mis torneos y en tu Dashboard.",
+    title: "Espera la aprobación y confirma tu lugar",
+    body: "El organizador aprueba las inscripciones y las marca como “Confirmadas”. Si el torneo tiene cuota, confirma el pago con el organizador. Verás el estado en Mis torneos y en tu panel.",
   },
   {
     n: "6",
+    icon: Swords,
+    title: "Juega y sigue tu llave",
+    body: "Cuando arranque, tu horario y tus rivales aparecen en la llave, en tiempo real. Llega puntual; si el organizador usa registro con código QR, muéstralo desde tu perfil. El organizador marca los resultados.",
+  },
+  {
+    n: "7",
     icon: Medal,
-    title: "Juega y sigue el bracket",
-    body: "Cuando arranque, tu horario y rivales aparecen en tiempo real. Llega puntual; el organizador registrará los resultados. ¡A celebrar en la entrega de premios!",
+    title: "Gana y reclama tu premio",
+    body: "Al finalizar el torneo, tus premios aparecen en la sección de Premios. Preséntate con el organizador o el patrocinador para recibirlos.",
+    cta: { href: "/prizes", label: "Ver premios" },
   },
 ];
 
 const faq = [
   {
     q: "¿Y si no tengo equipo?",
-    a: "Para torneos 1v1 puedes inscribirte directo. Para los de equipo, crea uno o únete a uno que esté reclutando en la sección de Equipos (o en Detalles del torneo).",
+    a: "Para torneos 1v1 puedes inscribirte directo. Para los de equipo, crea uno nuevo o busca quienes reclutan en la sección de Agentes libres.",
   },
   {
-    q: "¿La registración es gratis?",
-    a: "Depende del torneo. Cada uno indica su inscripción ($) y su premio. Los torneos de prueba/demo suelen ser gratis.",
+    q: "¿El registro es gratis?",
+    a: "Depende del torneo. Cada uno indica su cuota y sus premios. Los torneos de práctica suelen ser gratis.",
   },
   {
     q: "¿Cómo sé mi horario de partido?",
-    a: "En la página del torneo (pestaña Bracket) y en tus torneos del Dashboard verás tu próximo partido con hora y rival en tiempo real.",
+    a: "En la página del torneo, en la llave, y en tu panel de jugador verás tu próximo partido con hora y rival, en tiempo real.",
   },
   {
-    q: "¿Puedo registrarme a varios torneos?",
+    q: "¿Puedo inscribirme a varios torneos?",
     a: "Sí. Cada torneo es independiente. Solo asegúrate de cumplir los horarios si juegas en más de uno.",
+  },
+  {
+    q: "¿Necesito código QR?",
+    a: "Solo si el organizador del torneo lo usa para registro o entrega de premios. Lo encuentras en el menú de tu cuenta, en “Mi código QR”.",
+  },
+  {
+    q: "¿Cómo consigo equipo?",
+    a: "Publica tu perfil en Agentes libres: los capitanes te encuentran ahí y te pueden invitar directo a su equipo.",
   },
 ];
 
 export const metadata = {
-  title: "Cómo registrarte | GamersLand",
-  description: "Guía paso a paso para registrarte a un torneo en GamersLand.",
+  title: "Cómo participar | GamersLand",
+  description: "Guía paso a paso para participar en un torneo de GamersLand.",
 };
 
 export default function GuiaPage() {
@@ -79,11 +94,11 @@ export default function GuiaPage() {
           <Swords className="w-4 h-4" /> Guía rápida
         </div>
         <h1 className="text-3xl sm:text-5xl font-black tracking-tight text-foreground">
-          Cómo registrarte a un torneo
+          Cómo participar en un torneo
         </h1>
         <p className="mt-4 max-w-2xl mx-auto text-muted sm:text-lg">
-          Registrar tu equipo (o tu name) en un torneo toma menos de un minuto.
-          Sigue estos pasos y en un rato estás en el bracket.
+          Inscribirte (a ti o a tu equipo) toma menos de un minuto.
+          Sigue estos pasos y en un rato estás jugando tu primer partido.
         </p>
       </div>
 
@@ -142,9 +157,9 @@ export default function GuiaPage() {
         <p className="text-sm text-muted leading-relaxed">
           <span className="font-bold text-foreground">Tip:</span> los torneos con
           estado <span className="text-green-400 font-semibold">“Abierto”</span> aceptan
-          registros en este momento. Los de <span className="text-muted">“Planeación”</span>{" "}
-          están por abrir. Mira la pestaña <span className="text-foreground font-semibold">Mis
-          torneos</span> en la portada para seguir el estado de lo que ya registraste.
+          inscripciones en este momento. Los de <span className="text-muted">“Planeación”</span>{" "}
+          están por abrir. Revisa <span className="text-foreground font-semibold">Mis
+          torneos</span> en tu panel para seguir el estado de lo que ya registraste.
         </p>
       </aside>
 
@@ -152,15 +167,27 @@ export default function GuiaPage() {
       <div className="mt-12 flex flex-col sm:flex-row items-center justify-center gap-3">
         <Link
           href="/tournaments"
-          className="inline-flex items-center gap-2 px-8 py-4 bg-gold hover:bg-gold-hover text-background font-bold rounded-full text-sm sm:text-base transition-all shadow-lg shadow-gold/20"
+          className="inline-flex items-center gap-2 px-8 py-4 min-h-12 bg-gold hover:bg-gold-hover text-background font-bold rounded-full text-sm sm:text-base transition-all shadow-lg shadow-gold/20"
         >
           <Trophy className="w-4 h-4" /> Ver torneos abiertos
         </Link>
         <Link
           href="/teams"
-          className="inline-flex items-center gap-2 px-6 py-4 border border-border hover:border-gold/50 text-muted hover:text-gold font-semibold rounded-full text-sm transition-all"
+          className="inline-flex items-center gap-2 px-6 py-4 min-h-12 border border-border hover:border-gold/50 text-muted hover:text-gold font-semibold rounded-full text-sm transition-all"
         >
           <Users className="w-4 h-4" /> Explorar equipos
+        </Link>
+        <Link
+          href="/free-agents"
+          className="inline-flex items-center gap-2 px-6 py-4 min-h-12 border border-border hover:border-gold/50 text-muted hover:text-gold font-semibold rounded-full text-sm transition-all"
+        >
+          <UserSearch className="w-4 h-4" /> Agentes libres
+        </Link>
+        <Link
+          href="/prizes"
+          className="inline-flex items-center gap-2 px-6 py-4 min-h-12 border border-border hover:border-gold/50 text-muted hover:text-gold font-semibold rounded-full text-sm transition-all"
+        >
+          <Gift className="w-4 h-4" /> Premios
         </Link>
       </div>
     </div>

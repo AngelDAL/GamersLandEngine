@@ -39,13 +39,20 @@ export function TeamDnD({ tournamentId, tournamentName, teams: serverTeams, free
   const [showSearch, setShowSearch] = useState<string | null>(null);
   const [addingTo, setAddingTo] = useState<string | null>(null);
   const [addSuccess, setAddSuccess] = useState<string | null>(null);
+  const [disbanding, setDisbanding] = useState<string | null>(null);
+  const [removingMember, setRemovingMember] = useState<{ teamId: string; memberId: string; name: string } | null>(null);
   const searchRef = useRef<HTMLDivElement>(null);
 
   const registeredTeamIds = new Set(tournamentTeams.map((tt) => tt.teamId));
   const filteredTeams = teams.filter((t) => registeredTeamIds.has(t.id));
 
-  // Sync with server data when prop changes
-  useEffect(() => { setTeams(serverTeams); }, [serverTeams]);
+  // Sincroniza con los datos del servidor cuando cambian (patrón permitido:
+  // se compara durante el render, no dentro de un efecto).
+  const [prevServerTeams, setPrevServerTeams] = useState(serverTeams);
+  if (serverTeams !== prevServerTeams) {
+    setPrevServerTeams(serverTeams);
+    setTeams(serverTeams);
+  }
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -57,16 +64,6 @@ export function TeamDnD({ tournamentId, tournamentName, teams: serverTeams, free
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
   }, []);
-
-  if (isIndividual) {
-    return (
-      <Card className="p-6 text-center">
-        <Users className="w-10 h-10 text-muted mx-auto mb-3 opacity-30" />
-        <p className="text-muted font-medium">Torneo individual</p>
-        <p className="text-xs text-muted mt-1">Cada jugador compite por su cuenta</p>
-      </Card>
-    );
-  }
 
   const addToTeam = useCallback(async (teamId: string, playerId: string) => {
     const player = allPlayers.find((p) => p.id === playerId);
@@ -121,19 +118,30 @@ export function TeamDnD({ tournamentId, tournamentName, teams: serverTeams, free
     setTimeout(() => setAddSuccess(null), 2000);
     setAddingTo(null);
     router.refresh();
-  }, [allPlayers, router]);
+  }, [allPlayers, teams, teamSize, router]);
 
-  const removeMember = useCallback(async (teamId: string, memberId: string) => {
+  // La confirmación vive en un modal del sistema: nunca confirm() nativo.
+  const confirmDisband = async () => {
+    if (!disbanding) return;
+    await fetch(`/api/teams/${disbanding}`, { method: "DELETE" });
+    setTeams((prev) => prev.filter((t) => t.id !== disbanding));
+    setDisbanding(null);
+    router.refresh();
+  };
+
+  const confirmRemoveMember = async () => {
+    if (!removingMember) return;
+    const { teamId, memberId } = removingMember;
     // Optimistic remove
     setTeams((prev) =>
       prev.map((t) =>
-        t.id === teamId
-          ? { ...t, members: t.members.filter((m) => m.id !== memberId) }
-          : t
+        t.id === teamId ? { ...t, members: t.members.filter((m) => m.id !== memberId) } : t
       )
     );
     await fetch(`/api/teams/${teamId}/members/${memberId}`, { method: "DELETE" });
-  }, []);
+    setRemovingMember(null);
+    router.refresh();
+  };
 
   const changeCaptain = useCallback(async (teamId: string) => {
     if (!newCaptainId) return;
@@ -152,15 +160,19 @@ export function TeamDnD({ tournamentId, tournamentName, teams: serverTeams, free
     setNewCaptainId("");
   }, [newCaptainId]);
 
-  const disbandTeam = useCallback(async (teamId: string) => {
-    if (!confirm("¿Eliminar este equipo? Los miembros volverán a ser agentes libres.")) return;
-    await fetch(`/api/teams/${teamId}`, { method: "DELETE" });
-    setTeams((prev) => prev.filter((t) => t.id !== teamId));
-  }, []);
-
   const searchResults = allPlayers.filter((p) =>
     p.username.toLowerCase().includes(addSearch.toLowerCase())
   );
+
+  if (isIndividual) {
+    return (
+      <Card className="p-6 text-center">
+        <Users className="w-10 h-10 text-muted mx-auto mb-3 opacity-30" />
+        <p className="text-muted font-medium">Torneo individual</p>
+        <p className="text-xs text-muted mt-1">Cada jugador compite por su cuenta</p>
+      </Card>
+    );
+  }
 
   return (
     <div className="space-y-4">
@@ -253,9 +265,9 @@ export function TeamDnD({ tournamentId, tournamentName, teams: serverTeams, free
                     <h3 className="font-bold text-sm truncate">{team.name}</h3>
                     <span className="text-[10px] text-muted shrink-0">{activeMembers.length}/{teamSize || 5}</span>
                   </div>
-                  <button onClick={() => disbandTeam(team.id)}
-                    className="p-1.5 text-muted hover:text-red-400 transition-colors shrink-0" title="Disolver equipo">
-                    <Trash2 className="w-3.5 h-3.5" />
+                  <button onClick={() => setDisbanding(team.id)}
+                    className="min-h-[40px] min-w-[40px] flex items-center justify-center text-muted hover:text-red-400 transition-colors shrink-0" title="Disolver equipo">
+                    <Trash2 className="w-4 h-4" />
                   </button>
                 </div>
 
@@ -263,52 +275,58 @@ export function TeamDnD({ tournamentId, tournamentName, teams: serverTeams, free
                   <Crown className="w-3 h-3 text-gold shrink-0" />
                   <span className="text-[10px] text-muted">Capitán: {team.captain.username}</span>
                   <button onClick={() => setCaptainChanging(captainChanging === team.id ? null : team.id)}
-                    className="text-[9px] text-gold hover:underline shrink-0">cambiar</button>
+                    className="min-h-[40px] px-2 -my-2 text-[10px] text-gold hover:underline shrink-0">cambiar</button>
                 </div>
 
                 {captainChanging === team.id && (
                   <div className="flex gap-1 mb-3">
                     <select value={newCaptainId} onChange={(e) => setNewCaptainId(e.target.value)}
-                      className="flex-1 px-2 py-1.5 bg-background border border-border rounded-lg text-xs">
+                      className="flex-1 min-h-[40px] px-2 py-2 bg-background border border-border rounded-lg text-xs">
                       <option value="">Nuevo capitán...</option>
                       {activeMembers.filter((m) => m.userId !== team.captainId).map((m) => (
                         <option key={m.userId} value={m.userId}>{m.user.username}</option>
                       ))}
                     </select>
                     <button onClick={() => changeCaptain(team.id)}
-                      className="px-3 py-1.5 bg-gold text-background rounded-lg text-[10px] font-bold">
-                      <Check className="w-3 h-3" />
+                      className="min-h-[40px] px-3 py-2 bg-gold text-background rounded-lg text-[10px] font-bold flex items-center justify-center">
+                      <Check className="w-3.5 h-3.5" />
                     </button>
                   </div>
                 )}
 
-                <div className="grid grid-cols-5 gap-1.5 mb-3">
+                <div className="space-y-1.5 mb-3">
                   {slots.map((i) => {
                     const member = activeMembers[i];
                     if (member) {
                       return (
-                        <div key={member.userId} className="flex flex-col items-center gap-0.5 p-1.5 bg-background border border-border rounded-lg relative group">
-                          <div className="w-7 h-7 rounded-full bg-gold/10 flex items-center justify-center text-gold text-[9px] font-bold">
+                        <div key={member.userId} className="flex items-center gap-2 p-1.5 bg-background border border-border rounded-lg">
+                          <div className="w-8 h-8 rounded-full bg-gold/10 flex items-center justify-center text-gold text-[10px] font-bold shrink-0">
                             {member.user.username[0].toUpperCase()}
                           </div>
-                          <span className="text-[8px] text-center leading-tight truncate w-full">{member.user.username}</span>
-                          {member.userId === team.captainId && <Crown className="w-2.5 h-2.5 text-gold absolute -top-1 -right-1" />}
-                          <button onClick={() => removeMember(team.id, member.id)}
-                            className="absolute inset-0 bg-black/50 rounded-lg items-center justify-center hidden group-hover:flex transition-opacity">
-                            <X className="w-3 h-3 text-red-400" />
+                          <span className="text-xs flex-1 min-w-0 truncate">{member.user.username}</span>
+                          {member.userId === team.captainId && (
+                            <span className="flex items-center gap-1 text-[9px] text-gold shrink-0">
+                              <Crown className="w-3 h-3" /> Capitán
+                            </span>
+                          )}
+                          <button
+                            onClick={() => setRemovingMember({ teamId: team.id, memberId: member.id, name: member.user.username })}
+                            className="min-h-[40px] min-w-[40px] flex items-center justify-center text-muted hover:text-red-400 transition-colors shrink-0"
+                            title="Quitar del equipo">
+                            <X className="w-4 h-4" />
                           </button>
                         </div>
                       );
                     }
                     // Empty slot
                     return (
-                      <div key={`empty-${i}`} className={`flex flex-col items-center justify-center p-1.5 border border-dashed rounded-lg min-h-[52px] transition-all ${
+                      <div key={`empty-${i}`} className={`flex items-center justify-center min-h-[40px] px-2 border border-dashed rounded-lg transition-all ${
                         isProcessing ? "border-gold/50 bg-gold/5" : "border-border"
                       }`}>
                         {isProcessing ? (
                           <Loader2 className="w-4 h-4 text-gold animate-spin" />
                         ) : (
-                          <span className="text-[8px] text-muted">Vacío</span>
+                          <span className="text-[9px] text-muted">Vacío</span>
                         )}
                       </div>
                     );
@@ -323,7 +341,7 @@ export function TeamDnD({ tournamentId, tournamentName, teams: serverTeams, free
                         <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3 text-muted" />
                         <input type="text" placeholder="Buscar jugador..." value={addSearch}
                           onChange={(e) => setAddSearch(e.target.value)}
-                          className="w-full pl-7 pr-2 py-1.5 bg-background border border-border rounded-lg text-xs text-foreground placeholder-muted focus:outline-none focus:border-gold"
+                          className="w-full pl-7 pr-2 min-h-[40px] py-2 bg-background border border-border rounded-lg text-xs text-foreground placeholder-muted focus:outline-none focus:border-gold"
                           autoFocus
                           disabled={isProcessing}
                         />
@@ -354,9 +372,9 @@ export function TeamDnD({ tournamentId, tournamentName, teams: serverTeams, free
                                 <div className="flex-1 min-w-0">
                                   <span className="block truncate">{p.username}</span>
                                   {alreadyHere ? (
-                                    <span className="block text-[9px] text-green-400">✓ Ya está en este equipo</span>
+                                    <span className="block text-[9px] text-green-400">Ya está en este equipo</span>
                                   ) : inOtherTeam.length > 0 ? (
-                                    <span className="block text-[9px] text-red-400">⚠ También en: {inOtherTeam.join(", ")}</span>
+                                    <span className="block text-[9px] text-red-400">También en: {inOtherTeam.join(", ")}</span>
                                   ) : null}
                                 </div>
                               </button>
@@ -367,7 +385,7 @@ export function TeamDnD({ tournamentId, tournamentName, teams: serverTeams, free
                     </div>
                   ) : (
                     <button onClick={() => setShowSearch(team.id)} disabled={isProcessing}
-                      className="w-full py-1.5 text-[10px] text-gold border border-dashed border-gold/30 rounded-lg hover:bg-gold/5 transition-colors flex items-center justify-center gap-1 disabled:opacity-50">
+                      className="w-full min-h-[40px] py-2 text-[11px] text-gold border border-dashed border-gold/30 rounded-lg hover:bg-gold/5 transition-colors flex items-center justify-center gap-1 disabled:opacity-50">
                       {isProcessing ? (
                         <Loader2 className="w-3 h-3 animate-spin" />
                       ) : justAdded ? (
@@ -382,6 +400,65 @@ export function TeamDnD({ tournamentId, tournamentName, teams: serverTeams, free
               </Card>
             );
           })}
+        </div>
+      )}
+
+      {/* ── Confirmación: disolver equipo ── */}
+      {disbanding && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-surface border border-border rounded-2xl p-6 max-w-sm w-full text-center">
+            <div className="w-14 h-14 rounded-full bg-red-500/10 flex items-center justify-center mx-auto mb-4">
+              <Trash2 className="w-7 h-7 text-red-400" />
+            </div>
+            <h2 className="text-lg font-bold text-foreground mb-1">Disolver equipo</h2>
+            <p className="text-sm text-muted mb-6">
+              ¿Disolver <strong className="text-foreground">{teams.find((t) => t.id === disbanding)?.name}</strong> en {tournamentName}?
+              Sus miembros volverán a ser agentes libres.
+            </p>
+            <div className="flex gap-3">
+              <button
+                onClick={confirmDisband}
+                className="flex-1 py-3 min-h-[44px] bg-red-500 text-white font-bold rounded-xl text-sm hover:bg-red-600"
+              >
+                Disolver
+              </button>
+              <button
+                onClick={() => setDisbanding(null)}
+                className="flex-1 py-3 min-h-[44px] border border-border text-muted rounded-xl text-sm hover:border-gold/50"
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Confirmación: quitar miembro ── */}
+      {removingMember && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-surface border border-border rounded-2xl p-6 max-w-sm w-full text-center">
+            <div className="w-14 h-14 rounded-full bg-red-500/10 flex items-center justify-center mx-auto mb-4">
+              <X className="w-7 h-7 text-red-400" />
+            </div>
+            <h2 className="text-lg font-bold text-foreground mb-1">Quitar del equipo</h2>
+            <p className="text-sm text-muted mb-6">
+              ¿Quitar a <strong className="text-foreground">{removingMember.name}</strong> del equipo?
+            </p>
+            <div className="flex gap-3">
+              <button
+                onClick={confirmRemoveMember}
+                className="flex-1 py-3 min-h-[44px] bg-red-500 text-white font-bold rounded-xl text-sm hover:bg-red-600"
+              >
+                Quitar
+              </button>
+              <button
+                onClick={() => setRemovingMember(null)}
+                className="flex-1 py-3 min-h-[44px] border border-border text-muted rounded-xl text-sm hover:border-gold/50"
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

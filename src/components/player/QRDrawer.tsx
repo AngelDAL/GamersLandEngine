@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import { X, QrCode, Maximize2 } from "lucide-react";
 
@@ -13,11 +13,6 @@ type Props = {
 
 export function QRDrawer({ userId, username, open, onClose }: Props) {
   const [maximized, setMaximized] = useState(false);
-  const [animating, setAnimating] = useState(false);
-
-  useEffect(() => {
-    if (open) setAnimating(true);
-  }, [open]);
 
   if (!open && !maximized) return null;
 
@@ -82,7 +77,7 @@ export function QRDrawer({ userId, username, open, onClose }: Props) {
         </div>
 
         <p className="text-[10px] text-muted text-center">
-          Toca el QR para verlo más grande · ID: {userId.slice(0, 8)}...
+          Toca el código para verlo más grande
         </p>
       </div>
       <style jsx>{`

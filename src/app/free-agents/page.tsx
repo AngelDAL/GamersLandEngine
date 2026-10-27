@@ -2,9 +2,13 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { useSession } from "next-auth/react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { toast } from "sonner";
 import { Card } from "@/components/ui/card";
-import { Users, User, Loader2, Send, AlertCircle } from "lucide-react";
+import {
+  Users, User, Loader2, Send, AlertCircle, UserPlus, RefreshCw, ExternalLink,
+} from "lucide-react";
 
 type Player = {
   id: string;
@@ -30,19 +34,33 @@ type Team = {
   }[];
 };
 
+type MyTeam = { id: string; name: string; captainId?: string };
+
+type MyTeamApi = {
+  id: string;
+  name: string;
+  captain?: { id: string; username: string };
+  members?: { userId: string; status: string }[];
+};
+
 type Tab = "players" | "teams";
 
-export default function FreeAgentsPage({
-  searchParams,
-}: {
-  searchParams?: { tab?: string };
-}) {
+const laneLabels: Record<string, string> = {
+  TOP: "Top",
+  JUNGLE: "Jungla",
+  MID: "Mid",
+  ADC: "ADC",
+  SUPPORT: "Support",
+};
+
+export default function FreeAgentsPage() {
   const { data: session, status } = useSession();
   const router = useRouter();
 
-  const [tab, setTab] = useState<Tab>((searchParams?.tab === "teams" || searchParams?.tab === "players" ? searchParams.tab as Tab : "teams"));
+  const [tab, setTab] = useState<Tab>("teams");
   const [players, setPlayers] = useState<Player[]>([]);
   const [teams, setTeams] = useState<Team[]>([]);
+  const [myTeams, setMyTeams] = useState<MyTeam[]>([]);
   const [loadingPlayers, setLoadingPlayers] = useState(false);
   const [loadingTeams, setLoadingTeams] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -57,17 +75,38 @@ export default function FreeAgentsPage({
     }
   }, [status, router]);
 
+  // Mis equipos (para el CTA de invitar desde la pestaña de jugadores)
+  useEffect(() => {
+    if (!session?.user?.id) return;
+    let cancelled = false;
+    fetch("/api/teams")
+      .then((r) => (r.ok ? r.json() : Promise.reject()))
+      .then((data: MyTeamApi[]) => {
+        if (cancelled) return;
+        const mine = (Array.isArray(data) ? data : [])
+          .filter((t) =>
+            t.members?.some(
+              (m) => m.userId === session.user.id && m.status === "ACTIVE",
+            ),
+          )
+          .map((t) => ({ id: t.id, name: t.name, captainId: t.captain?.id }));
+        setMyTeams(mine);
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [session]);
+
   // Fetch free agents
   const fetchPlayers = useCallback(async () => {
     setLoadingPlayers(true);
     setError(null);
     try {
       const res = await fetch("/api/free-agents");
-      if (!res.ok) throw new Error("Error al cargar jugadores");
+      if (!res.ok) throw new Error();
       const data = await res.json();
-      setPlayers(data);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Error al cargar jugadores");
+      setPlayers(Array.isArray(data) ? data : []);
+    } catch {
+      setError("No pudimos cargar los jugadores disponibles.");
     } finally {
       setLoadingPlayers(false);
     }
@@ -79,22 +118,26 @@ export default function FreeAgentsPage({
     setError(null);
     try {
       const res = await fetch("/api/teams?availableForUser=true");
-      if (!res.ok) throw new Error("Error al cargar equipos");
+      if (!res.ok) throw new Error();
       const data = await res.json();
-      setTeams(data);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Error al cargar equipos");
+      setTeams(Array.isArray(data) ? data : []);
+    } catch {
+      setError("No pudimos cargar los equipos disponibles.");
     } finally {
       setLoadingTeams(false);
     }
   }, []);
 
   useEffect(() => {
-    if (tab === "players") {
-      fetchPlayers();
-    } else {
-      fetchTeams();
-    }
+    // setTimeout(0): el fetch arranca fuera del cuerpo síncrono del efecto
+    const id = setTimeout(() => {
+      if (tab === "players") {
+        fetchPlayers();
+      } else {
+        fetchTeams();
+      }
+    }, 0);
+    return () => clearTimeout(id);
   }, [tab, fetchPlayers, fetchTeams]);
 
   // Send join request to a team
@@ -107,16 +150,22 @@ export default function FreeAgentsPage({
         body: JSON.stringify({ message: messages[teamId] || undefined }),
       });
       if (!res.ok) {
-        const errData = await res.json();
-        alert(errData.error || "Error al enviar solicitud");
+        const errData = await res.json().catch(() => ({}));
+        toast.error(errData.error || "No se pudo enviar la solicitud.");
         return;
       }
+      toast.success("Solicitud enviada. El capitán la revisará pronto.");
       setRequestedTeamIds((prev) => new Set(prev).add(teamId));
     } catch {
-      alert("Error al enviar solicitud");
+      toast.error("No se pudo enviar la solicitud. Intenta de nuevo.");
     } finally {
       setSendingTeamId(null);
     }
+  };
+
+  const retry = () => {
+    if (tab === "players") fetchPlayers();
+    else fetchTeams();
   };
 
   if (status === "loading") {
@@ -133,20 +182,23 @@ export default function FreeAgentsPage({
     return null; // Will redirect via useEffect
   }
 
+  const myCaptainTeam = myTeams.find((t) => t.captainId === session?.user?.id) || myTeams[0];
+  const laneOrder = ["TOP", "JUNGLE", "MID", "ADC", "SUPPORT"];
+
   return (
     <div className="max-w-4xl mx-auto px-4 py-8">
       <h1 className="text-3xl font-bold text-gold mb-2">Agentes Libres</h1>
       <p className="text-muted text-sm mb-6">
         {tab === "players"
-          ? "Jugadores disponibles para ser reclutados en equipos"
-          : "Equipos que aceptan solicitudes de unión"}
+          ? "Jugadores sin equipo, listos para ser reclutados"
+          : "Equipos que están buscando miembros"}
       </p>
 
       {/* Toggle */}
       <div className="flex gap-1 mb-8 bg-surface border border-border rounded-xl p-1 w-fit">
         <button
           onClick={() => setTab("teams")}
-          className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+          className={`flex items-center gap-2 px-4 py-2.5 min-h-10 rounded-lg text-sm font-medium transition-colors ${
             tab === "teams"
               ? "bg-gold text-background"
               : "text-muted hover:text-foreground"
@@ -157,14 +209,14 @@ export default function FreeAgentsPage({
         </button>
         <button
           onClick={() => setTab("players")}
-          className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+          className={`flex items-center gap-2 px-4 py-2.5 min-h-10 rounded-lg text-sm font-medium transition-colors ${
             tab === "players"
               ? "bg-gold text-background"
               : "text-muted hover:text-foreground"
           }`}
         >
           <User className="w-4 h-4" />
-          Agentes Libres
+          Jugadores libres
         </button>
       </div>
 
@@ -172,7 +224,14 @@ export default function FreeAgentsPage({
       {error && (
         <div className="mb-6 p-4 bg-red-500/10 border border-red-500/30 rounded-xl flex items-center gap-3 text-red-400">
           <AlertCircle className="w-5 h-5 shrink-0" />
-          <p className="text-sm">{error}</p>
+          <p className="text-sm flex-1">{error}</p>
+          <button
+            onClick={retry}
+            className="inline-flex items-center gap-1.5 px-3 py-2 min-h-10 text-xs font-bold text-red-400 border border-red-500/30 rounded-lg hover:bg-red-500/10 transition-colors"
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
+            Reintentar
+          </button>
         </div>
       )}
 
@@ -184,34 +243,59 @@ export default function FreeAgentsPage({
       ) : null}
 
       {/* Players tab */}
-      {tab === "players" && !loadingPlayers && (
+      {tab === "players" && !loadingPlayers && !error && (
         <div className="grid gap-3 md:grid-cols-2">
           {players.map((p) => (
-            <Card key={p.id} className="flex items-center gap-3 p-4">
-              <div className="w-10 h-10 rounded-full bg-gold/20 flex items-center justify-center text-gold font-bold text-sm">
-                {p.username[0].toUpperCase()}
-              </div>
-              <div>
-                <p className="font-medium">{p.username}</p>
-                <p className="text-xs text-muted">Jugador</p>
-              </div>
-            </Card>
+            <Link key={p.id} href={`/players/${p.id}`} className="group">
+              <Card className="flex items-center gap-3 p-4 hover:border-gold/50 transition-colors h-full">
+                {p.avatarUrl ? (
+                  <img src={p.avatarUrl} alt="" className="w-10 h-10 rounded-full object-cover" />
+                ) : (
+                  <div className="w-10 h-10 rounded-full bg-gold/20 flex items-center justify-center text-gold font-bold text-sm">
+                    {p.username[0].toUpperCase()}
+                  </div>
+                )}
+                <div className="flex-1 min-w-0">
+                  <p className="font-medium group-hover:text-gold transition-colors truncate">{p.username}</p>
+                  <p className="text-xs text-muted">Jugador sin equipo</p>
+                </div>
+                <ExternalLink className="w-4 h-4 text-muted shrink-0" />
+              </Card>
+            </Link>
           ))}
           {players.length === 0 && (
             <p className="text-muted text-center col-span-2 py-8">
-              No hay agentes libres disponibles
+              No hay jugadores sin equipo en este momento
             </p>
           )}
         </div>
       )}
 
+      {/* CTA invitar (sobre la lista de jugadores) */}
+      {tab === "players" && !loadingPlayers && !error && players.length > 0 && (
+        <div className="mt-6 p-4 bg-gold/5 border border-gold/20 rounded-xl flex flex-col sm:flex-row sm:items-center gap-3">
+          <UserPlus className="w-5 h-5 text-gold shrink-0" />
+          <p className="text-sm text-muted flex-1">
+            {myCaptainTeam
+              ? `¿Quieres reclutar a alguien? Entra a tu equipo "${myCaptainTeam.name}" para invitarlo por nombre o código QR.`
+              : "¿Quieres reclutar jugadores? Crea tu equipo y ábrelo a solicitudes."}
+          </p>
+          <Link
+            href={myCaptainTeam ? `/teams/${myCaptainTeam.id}` : "/teams/create"}
+            className="inline-flex items-center gap-2 px-4 py-2.5 min-h-10 bg-gold text-background font-bold rounded-xl text-sm hover:bg-gold-hover transition-colors whitespace-nowrap"
+          >
+            <UserPlus className="w-4 h-4" />
+            {myCaptainTeam ? "Invitar a mi equipo" : "Crear equipo"}
+          </Link>
+        </div>
+      )}
+
       {/* Teams tab */}
-      {tab === "teams" && !loadingTeams && (
+      {tab === "teams" && !loadingTeams && !error && (
         <div className="grid gap-4 md:grid-cols-2">
           {teams.map((team) => {
             const alreadyRequested = requestedTeamIds.has(team.id);
             const isSending = sendingTeamId === team.id;
-            const laneOrder = ["TOP", "JUNGLE", "MID", "ADC", "SUPPORT"];
             const availableLanes = laneOrder.filter(
               (l) => !team.members.some((m) => m.lane === l)
             );
@@ -262,10 +346,7 @@ export default function FreeAgentsPage({
                               {m.user.riotGameName || m.user.username}
                             </p>
                             <p className="text-[8px] text-muted truncate leading-tight">
-                              {m.lane === "TOP" ? "Top" :
-                               m.lane === "JUNGLE" ? "Jungla" :
-                               m.lane === "MID" ? "Mid" :
-                               m.lane === "ADC" ? "ADC" : "Support"}
+                              {laneLabels[m.lane || ""] || m.lane}
                             </p>
                           </div>
                         </div>
@@ -295,10 +376,7 @@ export default function FreeAgentsPage({
                     <div className="flex flex-wrap gap-1.5">
                       {availableLanes.map((l) => (
                         <span key={l} className="text-[10px] px-2 py-1 rounded-full bg-green-500/10 border border-green-500/30 text-green-400 font-bold">
-                          {l === "TOP" ? "Top" :
-                           l === "JUNGLE" ? "Jungla" :
-                           l === "MID" ? "Mid" :
-                           l === "ADC" ? "ADC" : "Support"} 🟢
+                          {laneLabels[l] || l}
                         </span>
                       ))}
                     </div>
@@ -320,13 +398,13 @@ export default function FreeAgentsPage({
                         [team.id]: e.target.value,
                       }))
                     }
-                    className="flex-1 px-3 py-2 bg-background border border-border rounded-lg text-sm text-foreground placeholder-muted focus:outline-none focus:border-gold focus:ring-1 focus:ring-gold/30 transition-all"
+                    className="flex-1 px-3 py-2.5 min-h-10 bg-background border border-border rounded-lg text-sm text-foreground placeholder-muted focus:outline-none focus:border-gold focus:ring-1 focus:ring-gold/30 transition-all"
                     disabled={alreadyRequested || isSending}
                   />
                   <button
                     onClick={() => handleRequestJoin(team.id)}
                     disabled={alreadyRequested || isSending}
-                    className={`px-4 py-2 rounded-lg text-sm font-bold transition-all flex items-center gap-1.5 whitespace-nowrap ${
+                    className={`px-4 py-2.5 min-h-10 rounded-lg text-sm font-bold transition-all flex items-center gap-1.5 whitespace-nowrap ${
                       alreadyRequested
                         ? "bg-green-600/20 text-green-400 border border-green-500/30 cursor-default"
                         : "bg-gold hover:bg-gold-hover text-background disabled:opacity-50"
@@ -335,7 +413,7 @@ export default function FreeAgentsPage({
                     {isSending ? (
                       <Loader2 className="w-4 h-4 animate-spin" />
                     ) : alreadyRequested ? (
-                      "✅ Solicitud enviada"
+                      "Solicitud enviada"
                     ) : (
                       <>
                         <Send className="w-3.5 h-3.5" />
@@ -349,7 +427,7 @@ export default function FreeAgentsPage({
           })}
           {teams.length === 0 && (
             <p className="text-muted text-center col-span-2 py-8">
-              No hay equipos disponibles para solicitar unión
+              No hay equipos buscando miembros ahora mismo
             </p>
           )}
         </div>

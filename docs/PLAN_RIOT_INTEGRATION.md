@@ -3,6 +3,47 @@
 ## Objetivo
 Integrar el Riot Tournament Stub API (y eventualmente el real) en GamersLandEngine para que los organizadores puedan generar códigos de torneo de League of Legends directamente desde la plataforma, y recibir resultados automáticos cuando terminen las partidas.
 
+## Estado real (octubre 2026)
+
+> Reescrito tras la integración de la clave viva (`RIOT_API_KEY` en `.env`).
+> Modo efectivo: **`stub`** — `RIOT_MODE` no está definido en `.env`, así que
+> aplica el valor por defecto del esquema.
+
+### Qué funciona hoy
+
+| Flujo | Modo stub | Modo live | Notas |
+|---|---|---|---|
+| Vincular cuenta LoL (`POST /api/profile/riot-link`) | Sí (siempre real) | Sí | Account-v1 + Summoner-v4, validación zod, errores en español, 1 intento/usuario/60 s |
+| Desvincular (`DELETE /api/profile/riot-link`) | Sí | Sí | No consulta Riot; `PlayerMatchHistory` se conserva |
+| Refrescar perfil (`POST /api/profile/riot-refresh`) | Sí | Sí | Caché de 1 h: con caché vivo hace 0 peticiones a Riot |
+| Perfil público `/players/[id]` | Sí | Sí | Lee historial de BD (`PlayerMatchHistory`), 0 Match-v5 en carga normal |
+| Registro de provider/torneo + códigos (`/api/riot/*`) | Sí | Guard | En live sin registro externo responde 503 "Modo live no configurado" |
+| Código por partido (`GET /api/matches/[matchId]/code`) | Sí | Guard | Autogenera bajo demanda; UI en `bracket/RiotMatchCode.tsx` |
+| Callback de resultado (`POST /api/riot/callback`) | Sí | Sí | Acepta formas stub/production, actualiza partido en transacción; historial de jugadores solo en live |
+| Avance de bracket desde el callback | No | No | El callback marca el partido; el avance de ronda lo dispara el flujo normal de resultados |
+
+### Qué requiere pasos externos (dueño) antes de live
+
+1. Clave de producción (no `RGAPI-…` de desarrollo) en `developer.riotgames.com`.
+2. Dar de alta un **provider** (`POST /lol/tournament/v5/providers` con región
+   `LAN` y callback `https://gamersland.tabtap.dev/api/riot/callback`) — o usar
+   `POST /api/riot/provider` con un usuario ADMIN.
+3. Crear el **torneo** de Riot bajo ese provider (`POST /api/riot/tournament`)
+   para cada torneo GamersLand que quiera códigos reales.
+4. Dejar `RIOT_MODE=production` en `.env`.
+5. Recordar los límites de la clave de producción (20 req/s, 100 req/2 min) y
+   que las claves de desarrollo caducan cada 24 h.
+
+### Variables de entorno
+
+```
+RIOT_API_KEY=…            # ya está en .env (no se reproduce aquí)
+RIOT_MODE=stub            # aún NO está en .env — añadir "production" solo al dar el paso live
+RIOT_CALLBACK_URL=         # aún NO está en .env; si falta, se auto-construye desde
+                           # NEXT_PUBLIC_APP_URL → https://gamersland.tabtap.dev/api/riot/callback
+NEXT_PUBLIC_APP_URL="https://gamersland.tabtap.dev"   # ya está en .env
+```
+
 ## Arquitectura
 
 ```
@@ -111,9 +152,10 @@ interface RiotCodeConfig {
 
 ## Variables de Entorno a Agregar
 ```
-RIOT_API_KEY=RGAPI-xxxxx
-RIOT_MODE=stub            # stub | production
-RIOT_CALLBACK_URL=https://gamersland.xyz/api/riot/callback
+RIOT_API_KEY=RGAPI-xxxxx        # ya presente en .env
+RIOT_MODE=stub                  # aún ausente en .env (stub = default); "production" solo en live
+RIOT_CALLBACK_URL=              # aún ausente en .env; si falta se deriva de NEXT_PUBLIC_APP_URL
+                                # → https://gamersland.tabtap.dev/api/riot/callback
 ```
 
 ## Riesgos y Mitigaciones

@@ -13,10 +13,12 @@ import { showToast, ToastContainer } from "@/components/shared/Toast";
 import { useSocket } from "@/hooks/useSocket";
 import {
   Settings, Swords, Trophy, Users, UserPlus, Shield,
-  QrCode, Search, Check, X, Loader2,
-  Gamepad2, Calendar, DollarSign, MapPin, User,
-  UserCheck, Camera, Plus, Info, Filter, Trash2,
+  Search, Check, X, Loader2,
+  User, UserCheck, Camera, Plus, Info, Filter, Trash2,
+  Clock, Undo2, Ban, AlertTriangle, Crown, ClipboardCheck,
 } from "lucide-react";
+import { estimateRoundCount } from "@/lib/bracket-engine";
+import type { BracketMatch, BracketRound } from "../bracket/BracketInteractive";
 
 type Player = { id: string; username: string; avatarUrl: string | null };
 type Team = {
@@ -34,10 +36,48 @@ type Registration = {
   status: string;
   createdAt: string;
   user: { id: string; username: string; avatarUrl: string | null };
+  team: { id: string; name: string } | null;
+};
+
+type PrizeRow = { id: string; name: string; value: string | null; position: number | null };
+type OrganizerRow = { id: string; userId: string; user: { id: string; username: string } };
+type TournamentTeamRow = {
+  id: string;
+  teamId: string;
+  seed?: number | null;
+  team: {
+    id: string;
+    name: string;
+    captainId: string;
+    captain: { id: string; username: string };
+    _count: { members: number };
+    members: { userId: string; status: string; user: { id: string; username: string } }[];
+  };
+};
+
+type ManageTournament = {
+  id: string;
+  name: string;
+  status: string;
+  game: string;
+  description: string | null;
+  location: string | null;
+  imageUrl?: string | null;
+  isTeamBased: boolean;
+  teamSize: number;
+  maxTeams: number;
+  entryFee: number | null;
+  eventDate: string;
+  bracketType: string;
+  rounds: BracketRound[];
+  prizes: PrizeRow[];
+  organizers: OrganizerRow[];
+  tournamentTeams: TournamentTeamRow[];
 };
 
 type Props = {
-  tournament: any;
+  tournament: ManageTournament;
+  userId: string;
   players: Player[];
   registrations: Registration[];
   allPlayers: Player[];
@@ -67,13 +107,27 @@ function InfoTip({ text }: { text: string }) {
   );
 }
 
-export function ManageTournamentClient({ tournament, players, registrations, allPlayers, organizers, teams, freeAgents, isAdmin }: Props) {
+export function ManageTournamentClient({ tournament, userId, players, registrations, allPlayers, organizers, teams, freeAgents, isAdmin }: Props) {
   const isIndividual = tournament.isTeamBased === false;
-  const membersInTeam = new Set(teams.flatMap((t: any) => t.members.map((m: any) => m.userId)));
+  const membersInTeam = new Set(teams.flatMap((t) => t.members.map((m) => m.userId)));
   const router = useRouter();
-  const [tab, setTab] = useState<"alta" | "equipos" | "general" | "bracket" | "prizes" | "participants">("alta");
+  const [tab, setTab] = useState<"alta" | "inscripciones" | "equipos" | "general" | "bracket" | "prizes" | "participants">("alta");
   const [loading, setLoading] = useState(false);
-  const { socket } = useSocket();
+  const { socket } = useSocket(userId);
+
+  // Inscripciones: aprobación y pagos
+  const [regFilter, setRegFilter] = useState<"PENDING" | "CONFIRMED" | "REJECTED">("PENDING");
+  const [approvalConfirm, setApprovalConfirm] = useState<{ regId: string; action: "approve" | "reject"; username: string } | null>(null);
+  const [regBusy, setRegBusy] = useState<string | null>(null);
+
+  // Cancelación / eliminación del torneo
+  const [cancelTournamentConfirm, setCancelTournamentConfirm] = useState(false);
+  const [deleteTournamentConfirm, setDeleteTournamentConfirm] = useState(false);
+  const [deleteName, setDeleteName] = useState("");
+
+  // Creación de equipo desde la lista de registrados
+  const [createTeamFor, setCreateTeamFor] = useState<{ id: string; username: string } | null>(null);
+  const [createTeamName, setCreateTeamName] = useState("");
 
   // Registrations table toggles
   const [togglingPayment, setTogglingPayment] = useState<string | null>(null);
@@ -87,7 +141,6 @@ export function ManageTournamentClient({ tournament, players, registrations, all
   const [playerSearch, setPlayerSearch] = useState("");
   const [showDropdown, setShowDropdown] = useState(false);
   const [registerMode, setRegisterMode] = useState<"free" | "captain">("free");
-  const [captainTeamName, setCaptainTeamName] = useState("");
   const [showScanner, setShowScanner] = useState(false);
   const [registeredSearch, setRegisteredSearch] = useState("");
   const [confirmTarget, setConfirmTarget] = useState<{ id: string; username: string } | null>(null);
@@ -103,12 +156,18 @@ export function ManageTournamentClient({ tournament, players, registrations, all
 
   // Status
   const [status, setStatus] = useState(tournament.status);
+  // Sincroniza con el servidor durante el render (patrón permitido: se
+  // compara el valor anterior, no se llama a setState dentro de un efecto).
+  const [prevTournamentStatus, setPrevTournamentStatus] = useState(tournament.status);
+  if (tournament.status !== prevTournamentStatus) {
+    setPrevTournamentStatus(tournament.status);
+    setStatus(tournament.status);
+  }
 
   // Organizer assignment
   const [selectedOrgId, setSelectedOrgId] = useState("");
 
   // Bracket team
-  const [selectedTeamId, setSelectedTeamId] = useState("");
 
   // Prizes
   const [prizeName, setPrizeName] = useState("");
@@ -117,10 +176,6 @@ export function ManageTournamentClient({ tournament, players, registrations, all
 
   const showOverlay = useCallback((type: "registered" | "already" | "captain" | "error", username: string, teamName?: string) => {
     setOverlay({ type, username, teamName });
-  }, []);
-
-  const showFeedback = useCallback((type: "ok" | "error", msg: string) => {
-    // Feedback now uses overlay instead
   }, []);
 
   useEffect(() => {
@@ -208,7 +263,7 @@ export function ManageTournamentClient({ tournament, players, registrations, all
     setRegistering(true);
     setTeamRegMsg("");
     try {
-      const selectedTeam = teams.find((t: any) => t.id === teamRegId);
+      const selectedTeam = teams.find((t) => t.id === teamRegId);
       if (!selectedTeam) { setTeamRegMsg("Equipo no encontrado"); setRegistering(false); return; }
 
       // 1. Create TournamentTeam record
@@ -219,7 +274,7 @@ export function ManageTournamentClient({ tournament, players, registrations, all
       if (!ttRes.ok) { const e = await ttRes.json(); setTeamRegMsg(e.error || "Error al registrar equipo"); setRegistering(false); return; }
 
       // 2. Register each active member
-      const activeMembers = selectedTeam.members?.filter((m: any) => m.status === "ACTIVE") || [];
+      const activeMembers = selectedTeam.members?.filter((m) => m.status === "ACTIVE") || [];
       let registered = 0;
       for (const member of activeMembers) {
         const regRes = await fetch(`/api/tournaments/${tournament.id}/registrations`, {
@@ -229,7 +284,7 @@ export function ManageTournamentClient({ tournament, players, registrations, all
         if (regRes.ok) registered++;
       }
 
-      setTeamRegMsg(`✓ ${selectedTeam.name} registrado (${registered} miembros)`);
+      setTeamRegMsg(`Listo: ${selectedTeam.name} registrado (${registered} miembros)`);
       setTeamRegSearch("");
       setTeamRegId("");
       setShowTeamDropdown(false);
@@ -248,13 +303,14 @@ export function ManageTournamentClient({ tournament, players, registrations, all
         body: JSON.stringify({ paid }),
       });
       if (!res.ok) {
-        const data = await res.json();
-        alert(data.error || "Error al actualizar pago");
+        const data = await res.json().catch(() => ({}));
+        showToast(data.error || "Error al actualizar el pago", "error");
       } else {
+        showToast(paid ? "Marcado como pagado" : "Marcado como pendiente", "success");
         router.refresh();
       }
     } catch {
-      alert("Error de conexión");
+      showToast("Error de conexión", "error");
     }
     setTogglingPayment(null);
   };
@@ -269,15 +325,37 @@ export function ManageTournamentClient({ tournament, players, registrations, all
         body: JSON.stringify({ checkedIn }),
       });
       if (!res.ok) {
-        const data = await res.json();
-        alert(data.error || "Error al actualizar check-in");
+        const data = await res.json().catch(() => ({}));
+        showToast(data.error || "Error al actualizar el check-in", "error");
       } else {
         router.refresh();
       }
     } catch {
-      alert("Error de conexión");
+      showToast("Error de conexión", "error");
     }
     setTogglingCheckIn(null);
+  };
+
+  // Aprobar / rechazar una solicitud de inscripción
+  const applyApproval = async (regId: string, newStatus: "CONFIRMED" | "REJECTED") => {
+    setRegBusy(regId);
+    try {
+      const res = await fetch(`/api/tournaments/${tournament.id}/registrations/${regId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: newStatus }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        showToast(data.error || "Error al actualizar la inscripción", "error");
+      } else {
+        showToast(newStatus === "CONFIRMED" ? "Inscripción aprobada" : "Inscripción rechazada", "success");
+        router.refresh();
+      }
+    } catch {
+      showToast("Error de conexión", "error");
+    }
+    setRegBusy(null);
   };
 
   const handleQRScan = async (code: string) => {
@@ -300,12 +378,96 @@ export function ManageTournamentClient({ tournament, players, registrations, all
   const updateStatus = async (newStatus: string) => {
     setLoading(true);
     setStatusConfirm(null);
-    await fetch(`/api/tournaments/${tournament.id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ status: newStatus }),
-    });
-    setStatus(newStatus);
+    try {
+      const res = await fetch(`/api/tournaments/${tournament.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: newStatus }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        showToast(data.error || "No se pudo cambiar el estado", "error");
+      } else {
+        setStatus(newStatus);
+        showToast("Estado actualizado", "success");
+      }
+    } catch {
+      showToast("Error de conexión", "error");
+    }
+    setLoading(false);
+    router.refresh();
+  };
+
+  const cancelTournament = async () => {
+    setCancelTournamentConfirm(false);
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/tournaments/${tournament.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "CANCELLED" }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        showToast(data.error || "No se pudo cancelar el torneo", "error");
+      } else {
+        setStatus("CANCELLED");
+        showToast("Torneo cancelado", "success");
+      }
+    } catch {
+      showToast("Error de conexión", "error");
+    }
+    setLoading(false);
+    router.refresh();
+  };
+
+  const deleteTournament = async () => {
+    if (deleteName.trim() !== tournament.name) return;
+    setDeleteTournamentConfirm(false);
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/tournaments/${tournament.id}`, { method: "DELETE" });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        showToast(data.error || "No se pudo eliminar el torneo", "error");
+        setLoading(false);
+        return;
+      }
+      showToast("Torneo eliminado", "success");
+      router.push("/tournaments");
+      router.refresh();
+    } catch {
+      showToast("Error de conexión", "error");
+    }
+    setLoading(false);
+  };
+
+  const createTeamForPlayer = async () => {
+    if (!createTeamFor || !createTeamName.trim()) return;
+    setLoading(true);
+    try {
+      const teamRes = await fetch("/api/teams", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: createTeamName.trim(), captainId: createTeamFor.id }),
+      });
+      if (!teamRes.ok) {
+        const data = await teamRes.json().catch(() => ({}));
+        showToast(data.error || "Error al crear el equipo", "error");
+      } else {
+        const team = await teamRes.json();
+        await fetch(`/api/tournaments/${tournament.id}/teams`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ teamId: team.id }),
+        });
+        showToast(`Equipo "${team.name}" creado`, "success");
+        setCreateTeamFor(null);
+        setCreateTeamName("");
+      }
+    } catch {
+      showToast("Error de conexión", "error");
+    }
     setLoading(false);
     router.refresh();
   };
@@ -321,30 +483,6 @@ export function ManageTournamentClient({ tournament, players, registrations, all
     setSelectedOrgId("");
     setLoading(false);
     router.refresh();
-  };
-
-  const addTeamToTournament = async () => {
-    if (!selectedTeamId) return;
-    setLoading(true);
-    await fetch(`/api/tournaments/${tournament.id}/teams`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ teamId: selectedTeamId }),
-    });
-    setSelectedTeamId("");
-    setLoading(false);
-    router.refresh();
-  };
-
-  const generateBracket = async () => {
-    setLoading(true);
-    const res = await fetch(`/api/tournaments/${tournament.id}/rounds`, { method: "POST" });
-    setLoading(false);
-    router.refresh();
-    if (!res.ok) {
-      const data = await res.json();
-      showOverlay("error", data.error || "Error al generar bracket");
-    }
   };
 
   const createPrize = async () => {
@@ -373,17 +511,28 @@ export function ManageTournamentClient({ tournament, players, registrations, all
     { key: "COMPLETED", label: "Finalizado", desc: "Torneo terminado" },
   ];
 
+  // Transiciones válidas: solo al paso anterior o al siguiente del flujo.
+  const allowedTargets = (from: string): string[] => {
+    const idx = statusFlow.findIndex((s) => s.key === from);
+    if (idx < 0) return [];
+    const targets: string[] = [];
+    if (idx > 0) targets.push(statusFlow[idx - 1].key);
+    if (idx < statusFlow.length - 1) targets.push(statusFlow[idx + 1].key);
+    return targets;
+  };
+
   const currentIdx = statusFlow.findIndex((s) => s.key === status);
-  const registeredTeamIds = tournament.tournamentTeams?.map((tt: any) => tt.teamId) || [];
-  const availableTeams = teams.filter((t: any) => !registeredTeamIds.includes(t.id));
-  const filteredTeams = availableTeams.filter((t: any) =>
+  const registeredTeamIds = tournament.tournamentTeams?.map((tt) => tt.teamId) || [];
+  const availableTeams = teams.filter((t) => !registeredTeamIds.includes(t.id));
+  const filteredTeams = availableTeams.filter((t) =>
     t.name.toLowerCase().includes(teamRegSearch.toLowerCase())
   );
 
   const tabs = [
     { id: "alta" as const, label: "Alta", icon: UserPlus, desc: "Registrar" },
+    { id: "inscripciones" as const, label: "Inscripciones", icon: UserCheck, desc: "Aprobar" },
     ...(tournament.isTeamBased !== false ? [{ id: "equipos" as const, label: "Equipos", icon: Users, desc: "Armar equipos" }] : []),
-    { id: "bracket" as const, label: "Bracket", icon: Swords, desc: "Bracket" },
+    { id: "bracket" as const, label: "Llave", icon: Swords, desc: "Llave" },
     { id: "general" as const, label: "Estado", icon: Settings, desc: "Estado" },
     { id: "prizes" as const, label: "Premios", icon: Trophy, desc: "Premios" },
     { id: "participants" as const, label: "Participantes", icon: Users, desc: "Info" },
@@ -420,18 +569,22 @@ export function ManageTournamentClient({ tournament, players, registrations, all
             return (
               <div key={s.key} className="flex items-center flex-1">
                 <button
-                  onClick={() => setStatusConfirm(s.key)}
+                  onClick={() => {
+                    if (isCurrent || loading) return;
+                    if (allowedTargets(status).includes(s.key)) setStatusConfirm(s.key);
+                    else showToast("Ese cambio de estado no está permitido", "error");
+                  }}
                   disabled={loading || isCurrent}
-                  className="flex flex-col items-center gap-1 transition-all group"
+                  className="flex flex-col items-center gap-1 transition-all group min-h-[44px]"
                 >
-                  <div className={`w-8 h-8 sm:w-10 sm:h-10 rounded-full flex items-center justify-center text-xs sm:text-sm font-black border-2 transition-all ${
+                  <div className={`w-9 h-9 sm:w-10 sm:h-10 rounded-full flex items-center justify-center text-xs sm:text-sm font-black border-2 transition-all ${
                     isCurrent
                       ? "bg-gold text-background border-gold shadow-lg shadow-gold/30 scale-110"
                       : isActive
                         ? "bg-green-500/20 text-green-400 border-green-400"
                         : "bg-background text-muted border-border group-hover:border-gold/30"
                   }`}>
-                    {isCurrent ? "●" : isActive ? "✓" : i + 1}
+                    {isActive ? <Check className="w-4 h-4" /> : i + 1}
                   </div>
                   <span className={`text-[8px] sm:text-[10px] font-bold text-center leading-tight max-w-[64px] sm:max-w-[80px] ${
                     isCurrent ? "text-gold" : isActive ? "text-green-400" : "text-muted"
@@ -448,6 +601,29 @@ export function ManageTournamentClient({ tournament, players, registrations, all
             );
           })}
         </div>
+
+        {(status !== "CANCELLED" && status !== "COMPLETED") || (isAdmin && status !== "CANCELLED") ? (
+          <div className="flex flex-wrap items-center justify-end gap-2 mt-4 pt-3 border-t border-border">
+            {status !== "CANCELLED" && status !== "COMPLETED" && (
+              <button
+                onClick={() => setCancelTournamentConfirm(true)}
+                disabled={loading}
+                className="inline-flex items-center gap-1.5 px-3 py-2 min-h-[40px] rounded-lg text-xs font-bold text-red-400 border border-red-500/30 hover:bg-red-500/10 transition-colors disabled:opacity-50"
+              >
+                <Ban className="w-4 h-4" /> Cancelar torneo
+              </button>
+            )}
+            {isAdmin && status !== "CANCELLED" && (
+              <button
+                onClick={() => { setDeleteName(""); setDeleteTournamentConfirm(true); }}
+                disabled={loading}
+                className="inline-flex items-center gap-1.5 px-3 py-2 min-h-[40px] rounded-lg text-xs font-bold text-muted border border-border hover:border-red-500/40 hover:text-red-400 transition-colors disabled:opacity-50"
+              >
+                <Trash2 className="w-4 h-4" /> Eliminar torneo
+              </button>
+            )}
+          </div>
+        ) : null}
       </div>
 
       {/* ═══════ ALTA ═══════ */}
@@ -588,24 +764,13 @@ export function ManageTournamentClient({ tournament, players, registrations, all
                         <div className="ml-auto flex items-center gap-1">
                           {isFree && !isIndividual && (
                             <button
-                              onClick={async () => {
-                                const name = prompt(`Nombre del equipo para ${p.username}:`);
-                                if (!name?.trim()) return;
-                                const teamRes = await fetch("/api/teams", {
-                                  method: "POST", headers: { "Content-Type": "application/json" },
-                                  body: JSON.stringify({ name: name.trim(), captainId: p.id }),
-                                });
-                                if (!teamRes.ok) return;
-                                const team = await teamRes.json();
-                                await fetch(`/api/tournaments/${tournament.id}/teams`, {
-                                  method: "POST", headers: { "Content-Type": "application/json" },
-                                  body: JSON.stringify({ teamId: team.id }),
-                                });
-                                router.refresh();
+                              onClick={() => {
+                                setCreateTeamFor({ id: p.id, username: p.username });
+                                setCreateTeamName("");
                               }}
-                              className="px-2 py-0.5 bg-gold/10 text-gold rounded text-[9px] font-bold hover:bg-gold/20 transition-colors whitespace-nowrap"
+                              className="px-3 py-2 min-h-[40px] bg-gold/10 text-gold rounded-lg text-[10px] font-bold hover:bg-gold/20 transition-colors whitespace-nowrap"
                             >
-                              +Equipo
+                              Crear equipo
                             </button>
                           )}
                           <UserCheck className={`w-3 h-3 shrink-0 ${isFree ? "text-muted" : "text-green-400"}`} />
@@ -643,8 +808,8 @@ export function ManageTournamentClient({ tournament, players, registrations, all
                     {filteredTeams.length === 0 ? (
                       <div className="p-3 text-xs text-muted text-center">Sin resultados</div>
                     ) : (
-                      filteredTeams.map((t: any) => {
-                        const mc = t._count?.members || t.members?.filter((m: any)=>m.status==="ACTIVE").length || 0;
+                      filteredTeams.map((t) => {
+                        const mc = t._count?.members || t.members?.filter((m) => m.status === "ACTIVE").length || 0;
                         return (
                           <button key={t.id}
                             onClick={() => { setTeamRegSearch(t.name); setTeamRegId(t.id); setShowTeamDropdown(false); }}
@@ -665,16 +830,16 @@ export function ManageTournamentClient({ tournament, players, registrations, all
               </Button>
             </div>
             {teamRegMsg && (
-              <p className={`text-xs mt-2 ${teamRegMsg.startsWith("✓") ? "text-green-400" : "text-red"}`}>{teamRegMsg}</p>
+              <p className={`text-xs mt-2 ${teamRegMsg.startsWith("Listo") ? "text-green-400" : "text-red"}`}>{teamRegMsg}</p>
             )}
           </Card>
         )}
 
-        {/* ═══════ JUGADORES REGISTRADOS (TABLA CON PAGO Y CHECK-IN) ═══════ */}
+        {/* ═══════ JUGADORES REGISTRADOS (TABLA CON CHECK-IN) ═══════ */}
         <Card className="p-4 mt-4">
           <div className="flex items-center gap-2 mb-4">
             <h2 className="text-base font-bold text-gold">Jugadores registrados ({registrations.length})</h2>
-            <InfoTip text="Gestiona el pago y check-in de los jugadores registrados. Click en los badges para cambiar su estado." />
+            <InfoTip text="Marca la llegada de cada jugador el día del evento. Los pagos se gestionan en la pestaña Inscripciones." />
           </div>
 
           {/* Search */}
@@ -696,7 +861,6 @@ export function ManageTournamentClient({ tournament, players, registrations, all
                 <tr className="border-b border-border">
                   <th className="text-left py-2 px-2 text-muted font-medium">#</th>
                   <th className="text-left py-2 px-2 text-muted font-medium">Usuario</th>
-                  <th className="text-left py-2 px-2 text-muted font-medium">Pago</th>
                   <th className="text-left py-2 px-2 text-muted font-medium">Check-in</th>
                   <th className="text-left py-2 px-2 text-muted font-medium">Registrado</th>
                 </tr>
@@ -704,7 +868,7 @@ export function ManageTournamentClient({ tournament, players, registrations, all
               <tbody>
                 {sortedRegs.length === 0 ? (
                   <tr>
-                    <td colSpan={5} className="text-center py-8 text-muted text-xs">Sin resultados</td>
+                    <td colSpan={4} className="text-center py-8 text-muted text-xs">Sin resultados</td>
                   </tr>
                 ) : (
                   sortedRegs.map((reg, idx) => (
@@ -719,51 +883,38 @@ export function ManageTournamentClient({ tournament, players, registrations, all
                         </div>
                       </td>
                       <td className="py-2 px-2">
-                        <button
-                          onClick={() => togglePayment(reg.id, !reg.paid)}
-                          disabled={togglingPayment === reg.id}
-                          className={`px-2 py-1 rounded-lg text-[10px] font-bold border transition-all ${
-                            reg.paid
-                              ? "text-green-400 bg-green-500/10 border-green-500/30"
-                              : "text-amber-300 bg-amber-500/10 border-amber-500/30"
-                          } ${togglingPayment === reg.id ? "opacity-50 cursor-not-allowed" : "cursor-pointer hover:opacity-80"}`}
-                        >
-                          {togglingPayment === reg.id ? (
-                            <Loader2 className="w-3 h-3 animate-spin inline" />
-                          ) : reg.paid ? (
-                            "✅ Pagado"
-                          ) : (
-                            "❌ Pendiente"
-                          )}
-                        </button>
-                      </td>
-                      <td className="py-2 px-2">
                         {reg.checkedInAt ? (
                           <button
                             onClick={() => toggleCheckIn(reg.id, false)}
                             disabled={togglingCheckIn === reg.id}
-                            className={`px-2 py-1 rounded-lg text-[10px] font-bold border text-green-400 bg-green-500/10 border-green-500/30 ${
+                            className={`inline-flex items-center gap-1 px-2.5 py-2 min-h-[40px] rounded-lg text-[10px] font-bold border text-green-400 bg-green-500/10 border-green-500/30 ${
                               togglingCheckIn === reg.id ? "opacity-50 cursor-not-allowed" : "cursor-pointer hover:opacity-80"
                             }`}
                           >
                             {togglingCheckIn === reg.id ? (
                               <Loader2 className="w-3 h-3 animate-spin inline" />
                             ) : (
-                              <>✅ Llegó a las {new Date(reg.checkedInAt).toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit" })}</>
+                              <>
+                                <Check className="w-3 h-3" />
+                                Llegó a las {new Date(reg.checkedInAt).toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit" })}
+                              </>
                             )}
                           </button>
                         ) : (
                           <button
                             onClick={() => toggleCheckIn(reg.id, true)}
                             disabled={togglingCheckIn === reg.id}
-                            className={`px-2 py-1 rounded-lg text-[10px] font-bold border text-muted bg-background border-border ${
+                            className={`inline-flex items-center gap-1 px-2.5 py-2 min-h-[40px] rounded-lg text-[10px] font-bold border text-muted bg-background border-border ${
                               togglingCheckIn === reg.id ? "opacity-50 cursor-not-allowed" : "cursor-pointer hover:bg-gold/10 hover:text-gold hover:border-gold/30"
                             }`}
                           >
                             {togglingCheckIn === reg.id ? (
                               <Loader2 className="w-3 h-3 animate-spin inline" />
                             ) : (
-                              "❌ No ha llegado"
+                              <>
+                                <X className="w-3 h-3" />
+                                No ha llegado
+                              </>
                             )}
                           </button>
                         )}
@@ -795,49 +946,38 @@ export function ManageTournamentClient({ tournament, players, registrations, all
                     <span className="text-[10px] text-muted">#{idx + 1}</span>
                   </div>
                   <div className="flex flex-wrap gap-1.5">
-                    <button
-                      onClick={() => togglePayment(reg.id, !reg.paid)}
-                      disabled={togglingPayment === reg.id}
-                      className={`px-2 py-1 rounded-lg text-[10px] font-bold border transition-all ${
-                        reg.paid
-                          ? "text-green-400 bg-green-500/10 border-green-500/30"
-                          : "text-amber-300 bg-amber-500/10 border-amber-500/30"
-                      } ${togglingPayment === reg.id ? "opacity-50 cursor-not-allowed" : "cursor-pointer hover:opacity-80"}`}
-                    >
-                      {togglingPayment === reg.id ? (
-                        <Loader2 className="w-3 h-3 animate-spin inline" />
-                      ) : reg.paid ? (
-                        "✅ Pagado"
-                      ) : (
-                        "❌ Pendiente"
-                      )}
-                    </button>
                     {reg.checkedInAt ? (
                       <button
                         onClick={() => toggleCheckIn(reg.id, false)}
                         disabled={togglingCheckIn === reg.id}
-                        className={`px-2 py-1 rounded-lg text-[10px] font-bold border text-green-400 bg-green-500/10 border-green-500/30 ${
+                        className={`inline-flex items-center gap-1 px-2.5 py-2 min-h-[40px] rounded-lg text-[10px] font-bold border text-green-400 bg-green-500/10 border-green-500/30 ${
                           togglingCheckIn === reg.id ? "opacity-50 cursor-not-allowed" : "cursor-pointer hover:opacity-80"
                         }`}
                       >
                         {togglingCheckIn === reg.id ? (
                           <Loader2 className="w-3 h-3 animate-spin inline" />
                         ) : (
-                          <>✅ {new Date(reg.checkedInAt).toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit" })}</>
+                          <>
+                            <Check className="w-3 h-3" />
+                            Llegó {new Date(reg.checkedInAt).toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit" })}
+                          </>
                         )}
                       </button>
                     ) : (
                       <button
                         onClick={() => toggleCheckIn(reg.id, true)}
                         disabled={togglingCheckIn === reg.id}
-                        className={`px-2 py-1 rounded-lg text-[10px] font-bold border text-muted bg-background border-border ${
+                        className={`inline-flex items-center gap-1 px-2.5 py-2 min-h-[40px] rounded-lg text-[10px] font-bold border text-muted bg-background border-border ${
                           togglingCheckIn === reg.id ? "opacity-50 cursor-not-allowed" : "cursor-pointer hover:bg-gold/10 hover:text-gold hover:border-gold/30"
                         }`}
                       >
                         {togglingCheckIn === reg.id ? (
                           <Loader2 className="w-3 h-3 animate-spin inline" />
                         ) : (
-                          "❌ No ha llegado"
+                          <>
+                            <X className="w-3 h-3" />
+                            No ha llegado
+                          </>
                         )}
                       </button>
                     )}
@@ -848,6 +988,165 @@ export function ManageTournamentClient({ tournament, players, registrations, all
           </div>
         </Card>
       </>
+      )}
+
+      {/* ═══════ INSCRIPCIONES (aprobaciones y pagos) ═══════ */}
+      {tab === "inscripciones" && (
+        <Card className="p-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
+            <h2 className="text-base font-bold text-gold flex items-center gap-2">
+              <ClipboardCheck className="w-5 h-5" /> Inscripciones
+            </h2>
+            <div className="flex gap-1.5 bg-background p-1 rounded-xl border border-border overflow-x-auto">
+              {([
+                { key: "PENDING", label: "Pendientes" },
+                { key: "CONFIRMED", label: "Aprobadas" },
+                { key: "REJECTED", label: "Rechazadas" },
+              ] as const).map((f) => {
+                const count = registrations.filter((r) => r.status === f.key).length;
+                return (
+                  <button
+                    key={f.key}
+                    onClick={() => setRegFilter(f.key)}
+                    aria-pressed={regFilter === f.key}
+                    className={`px-3 py-2 min-h-[40px] rounded-lg text-xs font-bold whitespace-nowrap transition-all ${
+                      regFilter === f.key ? "bg-gold text-background" : "text-muted hover:text-foreground"
+                    }`}
+                  >
+                    {f.label}{count > 0 ? ` (${count})` : ""}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="max-h-[520px] overflow-y-auto space-y-2 pr-1">
+            {regFilter === "PENDING" &&
+              (registrations.filter((r) => r.status === "PENDING").length === 0 ? (
+                <div className="text-center py-10 text-muted text-xs">
+                  <ClipboardCheck className="w-7 h-7 mx-auto mb-2 opacity-30" />
+                  <p>No hay solicitudes pendientes</p>
+                </div>
+              ) : (
+                registrations
+                  .filter((r) => r.status === "PENDING")
+                  .map((reg) => (
+                    <div key={reg.id} className="bg-background border border-border rounded-xl p-3 flex flex-col sm:flex-row sm:items-center gap-3">
+                      <div className="flex items-center gap-3 min-w-0 flex-1">
+                        <div className="w-9 h-9 rounded-full bg-gold/10 flex items-center justify-center text-gold text-xs font-bold shrink-0">
+                          {reg.user.username[0].toUpperCase()}
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-sm font-bold truncate">{reg.user.username}</p>
+                          <p className="text-[10px] text-muted truncate">
+                            {reg.team ? `Equipo: ${reg.team.name} · ` : ""}
+                            {new Date(reg.createdAt).toLocaleDateString("es-MX", { day: "numeric", month: "short", year: "numeric" })}
+                            {reg.paid ? " · Pagado" : ""}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex gap-2 shrink-0">
+                        <button
+                          onClick={() => setApprovalConfirm({ regId: reg.id, action: "approve", username: reg.user.username })}
+                          disabled={regBusy === reg.id}
+                          className="flex-1 sm:flex-none inline-flex items-center justify-center gap-1.5 px-4 py-2.5 min-h-[40px] rounded-lg text-xs font-bold bg-green-500/10 border border-green-500/40 text-green-400 hover:bg-green-500/20 transition-colors disabled:opacity-50"
+                        >
+                          {regBusy === reg.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+                          Aprobar
+                        </button>
+                        <button
+                          onClick={() => setApprovalConfirm({ regId: reg.id, action: "reject", username: reg.user.username })}
+                          disabled={regBusy === reg.id}
+                          className="flex-1 sm:flex-none inline-flex items-center justify-center gap-1.5 px-4 py-2.5 min-h-[40px] rounded-lg text-xs font-bold bg-red-500/10 border border-red-500/40 text-red-400 hover:bg-red-500/20 transition-colors disabled:opacity-50"
+                        >
+                          <X className="w-4 h-4" />
+                          Rechazar
+                        </button>
+                      </div>
+                    </div>
+                  ))
+              ))}
+
+            {regFilter === "CONFIRMED" &&
+              (registrations.filter((r) => r.status === "CONFIRMED").length === 0 ? (
+                <div className="text-center py-10 text-muted text-xs">
+                  <UserCheck className="w-7 h-7 mx-auto mb-2 opacity-30" />
+                  <p>Aún no hay inscripciones aprobadas</p>
+                </div>
+              ) : (
+                registrations
+                  .filter((r) => r.status === "CONFIRMED")
+                  .map((reg) => (
+                    <div key={reg.id} className="bg-background border border-border rounded-lg p-3 flex flex-col sm:flex-row sm:items-center gap-3">
+                      <div className="flex items-center gap-3 min-w-0 flex-1">
+                        <div className="w-9 h-9 rounded-full bg-gold/10 flex items-center justify-center text-gold text-xs font-bold shrink-0">
+                          {reg.user.username[0].toUpperCase()}
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-sm font-bold truncate">{reg.user.username}</p>
+                          <p className="text-[10px] text-muted truncate">
+                            {reg.team ? `Equipo: ${reg.team.name} · ` : ""}
+                            {new Date(reg.createdAt).toLocaleDateString("es-MX", { day: "numeric", month: "short", year: "numeric" })}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1 bg-background border border-border p-1 rounded-xl shrink-0" role="group" aria-label="Estado de pago">
+                        <button
+                          onClick={() => { if (!reg.paid) togglePayment(reg.id, true); }}
+                          disabled={togglingPayment === reg.id}
+                          aria-pressed={reg.paid}
+                          className={`inline-flex items-center gap-1 px-3 py-2 min-h-[40px] rounded-lg text-[11px] font-bold transition-all ${
+                            reg.paid ? "bg-green-500/15 border border-green-500/40 text-green-400" : "text-muted hover:text-foreground border border-transparent"
+                          }`}
+                        >
+                          {togglingPayment === reg.id && reg.paid ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+                          Pagado
+                        </button>
+                        <button
+                          onClick={() => { if (reg.paid) togglePayment(reg.id, false); }}
+                          disabled={togglingPayment === reg.id}
+                          aria-pressed={!reg.paid}
+                          className={`inline-flex items-center gap-1 px-3 py-2 min-h-[40px] rounded-lg text-[11px] font-bold transition-all ${
+                            !reg.paid ? "bg-amber-500/15 border border-amber-500/40 text-amber-300" : "text-muted hover:text-foreground border border-transparent"
+                          }`}
+                        >
+                          {!reg.paid && togglingPayment === reg.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Clock className="w-3.5 h-3.5" />}
+                          Pendiente
+                        </button>
+                      </div>
+                    </div>
+                  ))
+              ))}
+
+            {regFilter === "REJECTED" &&
+              (registrations.filter((r) => r.status === "REJECTED").length === 0 ? (
+                <div className="text-center py-10 text-muted text-xs">
+                  <X className="w-7 h-7 mx-auto mb-2 opacity-30" />
+                  <p>No hay inscripciones rechazadas</p>
+                </div>
+              ) : (
+                registrations
+                  .filter((r) => r.status === "REJECTED")
+                  .map((reg) => (
+                    <div key={reg.id} className="bg-background border border-border rounded-lg p-3 flex items-center gap-3">
+                      <div className="w-9 h-9 rounded-full bg-red-500/10 flex items-center justify-center text-red-400 text-xs font-bold shrink-0">
+                        {reg.user.username[0].toUpperCase()}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-bold truncate">{reg.user.username}</p>
+                        <p className="text-[10px] text-muted truncate">
+                          {reg.team ? `Equipo: ${reg.team.name} · ` : ""}
+                          {new Date(reg.createdAt).toLocaleDateString("es-MX", { day: "numeric", month: "short", year: "numeric" })}
+                        </p>
+                      </div>
+                      <span className="px-2.5 py-1 rounded-lg text-[10px] font-bold bg-red-500/10 border border-red-500/30 text-red-400 shrink-0">
+                        Rechazada
+                      </span>
+                    </div>
+                  ))
+              ))}
+          </div>
+        </Card>
       )}
 
       {/* ═══════ EQUIPOS ═══════ */}
@@ -877,12 +1176,12 @@ export function ManageTournamentClient({ tournament, players, registrations, all
         <BracketBuilder
           tournamentId={tournament.id}
           tournamentStatus={status}
+          bracketType={tournament.bracketType}
           rounds={tournament.rounds || []}
           players={players}
           teams={teams}
           isIndividual={isIndividual}
           canEdit={true}
-          maxSlots={tournament.maxTeams}
           tournamentTeams={tournament.tournamentTeams || []}
         />
       )}
@@ -908,7 +1207,7 @@ export function ManageTournamentClient({ tournament, players, registrations, all
             <h2 className="text-base font-bold text-gold mb-3">Premios</h2>
             {tournament.prizes?.length > 0 ? (
               <div className="space-y-1">
-                {tournament.prizes.map((p: any) => (
+                {tournament.prizes.map((p) => (
                   <div key={p.id} className="flex items-center justify-between py-1.5 border-b border-border last:border-0 text-xs">
                     <div>
                       <p className="font-medium">{p.name}</p>
@@ -932,7 +1231,7 @@ export function ManageTournamentClient({ tournament, players, registrations, all
             <h2 className="text-base font-bold text-gold mb-3">Equipos ({registeredTeamIds.length})</h2>
             {tournament.tournamentTeams?.length > 0 ? (
               <div className="space-y-2">
-                {tournament.tournamentTeams.map((tt: any) => (
+                {tournament.tournamentTeams.map((tt) => (
                   <div key={tt.id} className="bg-background border border-border rounded-lg p-2">
                     <div className="flex items-center justify-between">
                       <h3 className="font-bold text-xs">{tt.team.name}</h3>
@@ -940,7 +1239,7 @@ export function ManageTournamentClient({ tournament, players, registrations, all
                     </div>
                     <p className="text-[10px] text-muted"><Shield className="w-2.5 h-2.5 inline" /> {tt.team.captain?.username}</p>
                     <div className="flex flex-wrap gap-1 mt-1">
-                      {tt.team.members?.map((m: any) => (
+                      {tt.team.members?.map((m) => (
                         <span key={m.userId} className="px-1.5 py-0.5 bg-gold/10 text-gold rounded text-[9px]">{m.user?.username}</span>
                       ))}
                     </div>
@@ -959,7 +1258,7 @@ export function ManageTournamentClient({ tournament, players, registrations, all
             <Card className="p-4">
               <h2 className="text-base font-bold text-gold mb-3">Organizadores</h2>
               <div className="space-y-1 mb-3">
-                {tournament.organizers?.map((o: any) => (
+                {tournament.organizers?.map((o) => (
                   <div key={o.id} className="flex items-center gap-2 py-1">
                     <div className="w-6 h-6 rounded-full bg-gold/10 flex items-center justify-center text-gold text-[9px] font-bold">{o.user.username[0].toUpperCase()}</div>
                     <span className="text-xs">{o.user.username}</span>
@@ -973,7 +1272,7 @@ export function ManageTournamentClient({ tournament, players, registrations, all
                     <select value={selectedOrgId} onChange={(e) => setSelectedOrgId(e.target.value)}
                       className="flex-1 px-2 py-1.5 bg-background border border-border rounded-lg text-xs">
                       <option value="">Asignar...</option>
-                      {organizers.filter((o) => !tournament.organizers?.some((to: any) => to.user.id === o.id)).map((o) => (
+                      {organizers.filter((o) => !tournament.organizers?.some((to) => to.user.id === o.id)).map((o) => (
                         <option key={o.id} value={o.id}>{o.username}</option>
                       ))}
                     </select>
@@ -990,6 +1289,166 @@ export function ManageTournamentClient({ tournament, players, registrations, all
 
       {/* QR Scanner */}
       {showScanner && <QRScanner onScan={handleQRScan} onClose={() => setShowScanner(false)} />}
+
+      {/* ── Modal: aprobar / rechazar inscripción ── */}
+      {approvalConfirm && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-surface border border-border rounded-2xl p-6 max-w-sm w-full text-center">
+            <div className={`w-14 h-14 rounded-full flex items-center justify-center mx-auto mb-4 ${
+              approvalConfirm.action === "approve" ? "bg-green-500/15" : "bg-red-500/15"
+            }`}>
+              {approvalConfirm.action === "approve"
+                ? <Check className="w-7 h-7 text-green-400" />
+                : <X className="w-7 h-7 text-red-400" />}
+            </div>
+            <h2 className="text-lg font-bold text-foreground mb-1">
+              {approvalConfirm.action === "approve" ? "Aprobar inscripción" : "Rechazar inscripción"}
+            </h2>
+            <p className="text-sm text-muted mb-6">
+              {approvalConfirm.action === "approve"
+                ? `La solicitud de ${approvalConfirm.username} pasará a Aprobada y ocupará un cupo.`
+                : `La solicitud de ${approvalConfirm.username} quedará rechazada y liberará su cupo.`}
+            </p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => {
+                  const { regId, action } = approvalConfirm;
+                  setApprovalConfirm(null);
+                  applyApproval(regId, action === "approve" ? "CONFIRMED" : "REJECTED");
+                }}
+                className={`flex-1 py-3 min-h-[44px] font-bold rounded-xl text-sm ${
+                  approvalConfirm.action === "approve"
+                    ? "bg-green-600 text-white hover:bg-green-700"
+                    : "bg-red-600 text-white hover:bg-red-700"
+                }`}
+              >
+                {approvalConfirm.action === "approve" ? "APROBAR" : "RECHAZAR"}
+              </button>
+              <button
+                onClick={() => setApprovalConfirm(null)}
+                className="flex-1 py-3 min-h-[44px] border border-border text-muted rounded-xl text-sm hover:border-gold/50"
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Modal: cancelar torneo ── */}
+      {cancelTournamentConfirm && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-surface border border-border rounded-2xl p-6 max-w-sm w-full text-center">
+            <div className="w-14 h-14 rounded-full bg-red-500/15 flex items-center justify-center mx-auto mb-4">
+              <Ban className="w-7 h-7 text-red-400" />
+            </div>
+            <h2 className="text-lg font-bold text-foreground mb-1">Cancelar torneo</h2>
+            <p className="text-sm text-muted mb-6">
+              <strong className="text-foreground">{tournament.name}</strong> quedará como Cancelado: se detienen
+              las inscripciones y los partidos. Los datos del torneo se conservan.
+            </p>
+            <div className="flex gap-3">
+              <button
+                onClick={cancelTournament}
+                disabled={loading}
+                className="flex-1 py-3 min-h-[44px] bg-red-600 text-white font-bold rounded-xl text-sm hover:bg-red-700 disabled:opacity-50"
+              >
+                {loading ? "..." : "SÍ, CANCELAR EL TORNEO"}
+              </button>
+              <button
+                onClick={() => setCancelTournamentConfirm(false)}
+                className="flex-1 py-3 min-h-[44px] border border-border text-muted rounded-xl text-sm hover:border-gold/50"
+              >
+                Volver
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Modal: eliminar torneo (solo administradores) ── */}
+      {deleteTournamentConfirm && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-surface border border-red-500/40 rounded-2xl p-6 max-w-md w-full">
+            <div className="flex items-center gap-3 mb-3">
+              <div className="w-11 h-11 rounded-full bg-red-500/15 flex items-center justify-center shrink-0">
+                <AlertTriangle className="w-6 h-6 text-red-400" />
+              </div>
+              <div>
+                <h2 className="text-lg font-bold text-foreground">Eliminar torneo</h2>
+                <p className="text-xs text-muted">Acción permanente</p>
+              </div>
+            </div>
+            <p className="text-sm text-muted mb-4">
+              Se borrará <strong className="text-foreground">{tournament.name}</strong> con todas sus
+              inscripciones, llaves, resultados y premios. No se puede deshacer.
+            </p>
+            <input
+              type="text"
+              value={deleteName}
+              onChange={(e) => setDeleteName(e.target.value)}
+              placeholder={tournament.name}
+              className="w-full px-3 py-3 bg-background border border-border rounded-xl text-sm text-foreground placeholder-muted focus:outline-none focus:border-red-500 mb-4"
+            />
+            <div className="flex gap-3">
+              <button
+                onClick={deleteTournament}
+                disabled={deleteName.trim() !== tournament.name || loading}
+                className="flex-1 py-3 min-h-[44px] bg-red-600 text-white font-bold rounded-xl text-sm hover:bg-red-700 disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                {loading ? "..." : "ELIMINAR DEFINITIVAMENTE"}
+              </button>
+              <button
+                onClick={() => setDeleteTournamentConfirm(false)}
+                className="flex-1 py-3 min-h-[44px] border border-border text-muted rounded-xl text-sm hover:border-gold/50"
+              >
+                Volver
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Modal: crear equipo desde la lista ── */}
+      {createTeamFor && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-surface border border-border rounded-2xl p-6 max-w-sm w-full">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-11 h-11 rounded-full bg-gold/10 flex items-center justify-center shrink-0">
+                <Shield className="w-5 h-5 text-gold" />
+              </div>
+              <div>
+                <h2 className="text-lg font-bold text-foreground">Crear equipo</h2>
+                <p className="text-xs text-muted">{createTeamFor.username} será el capitán</p>
+              </div>
+            </div>
+            <input
+              type="text"
+              value={createTeamName}
+              onChange={(e) => setCreateTeamName(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") createTeamForPlayer(); }}
+              placeholder="Nombre del equipo"
+              className="w-full px-3 py-3 bg-background border border-border rounded-xl text-sm text-foreground placeholder-muted focus:outline-none focus:border-gold mb-4"
+              autoFocus
+            />
+            <div className="flex gap-3">
+              <button
+                onClick={createTeamForPlayer}
+                disabled={!createTeamName.trim() || loading}
+                className="flex-1 py-3 min-h-[44px] bg-gold text-background font-bold rounded-xl text-sm hover:bg-gold-hover disabled:opacity-40"
+              >
+                {loading ? "..." : "CREAR EQUIPO"}
+              </button>
+              <button
+                onClick={() => setCreateTeamFor(null)}
+                className="flex-1 py-3 min-h-[44px] border border-border text-muted rounded-xl text-sm hover:border-gold/50"
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Registration Overlay */}
       {overlay && (
@@ -1043,16 +1502,18 @@ export function ManageTournamentClient({ tournament, players, registrations, all
           onCancel={() => setConfirmTarget(null)}
         />
       )}
+
+      <ToastContainer />
     </div>
   );
 }
 
 function BracketBuilder({
-  tournamentId, tournamentStatus, rounds, players, teams, isIndividual, canEdit, maxSlots, tournamentTeams,
+  tournamentId, tournamentStatus, bracketType, rounds, players, teams, isIndividual, canEdit, tournamentTeams,
 }: {
-  tournamentId: string; tournamentStatus: string; rounds: any[];
+  tournamentId: string; tournamentStatus: string; bracketType: string; rounds: BracketRound[];
   players: { id: string; username: string }[];
-  teams: any[]; isIndividual: boolean; canEdit: boolean; maxSlots: number;
+  teams: Team[]; isIndividual: boolean; canEdit: boolean;
   tournamentTeams: { teamId: string }[];
 }) {
   const router = useRouter();
@@ -1065,16 +1526,20 @@ function BracketBuilder({
   const [schedulingMatch, setSchedulingMatch] = useState<string | null>(null);
   const [scheduleDate, setScheduleDate] = useState("");
 
+  // Confirmaciones del sistema (nunca confirm()/alert() nativos)
+  const [generateConfirm, setGenerateConfirm] = useState(false);
+  const [revokeConfirm, setRevokeConfirm] = useState<{ matchId: string; roundId: string } | null>(null);
+
   // Winner confirmation dialog
   const confirmDialogRef = useRef<HTMLDialogElement>(null);
   const [winnerConfirm, setWinnerConfirm] = useState<{
     matchId: string; winnerId: string; roundId: string; winnerName: string; loserName: string;
   } | null>(null);
 
-  const tournamentTeamIds = new Set((tournamentTeams || []).map((tt: any) => tt.teamId));
+  const tournamentTeamIds = new Set((tournamentTeams || []).map((tt) => tt.teamId));
   const allParticipants = isIndividual
     ? players.map((p) => ({ id: p.id, name: p.username }))
-    : teams.filter((t: any) => tournamentTeamIds.has(t.id)).map((t: any) => ({ id: t.id, name: t.name }));
+    : teams.filter((t) => tournamentTeamIds.has(t.id)).map((t) => ({ id: t.id, name: t.name }));
 
   const assignedIds = new Set<string>();
   for (const round of rounds) {
@@ -1083,6 +1548,37 @@ function BracketBuilder({
       if (match.team2Id) assignedIds.add(match.team2Id);
     }
   }
+
+  // La construcción manual (slots a mano) solo existe en planeación/registro
+  // abierto; el marcador y la revocación siguen disponibles siempre.
+  const manualEditable = ["DRAFT", "OPEN_REGISTRATION"].includes(tournamentStatus);
+  const participantCount = allParticipants.length;
+  const estimatedRounds = estimateRoundCount(bracketType, participantCount);
+  const unsupportedDouble = bracketType === "DOUBLE_ELIMINATION" && estimatedRounds === null;
+
+  // Generación real de la llave (el servidor arma rondas, byes y avances)
+  const generateBracket = async () => {
+    setGenerateConfirm(false);
+    setLoading(true);
+    setStatusMsg("");
+    try {
+      const res = await fetch(`/api/tournaments/${tournamentId}/rounds`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setStatusMsg(data.error || "No se pudo generar la llave");
+      } else {
+        setStatusMsg(`Llave generada con ${data.roundCount} ${data.roundCount === 1 ? "ronda" : "rondas"}${data.byes ? ` y ${data.byes} ${data.byes === 1 ? "participante sin rival" : "participantes sin rival"}` : ""}`);
+      }
+    } catch {
+      setStatusMsg("Error de conexión al generar la llave");
+    }
+    setLoading(false);
+    router.refresh();
+  };
 
   const initBracket = async () => {
     setLoading(true); setStatusMsg("");
@@ -1093,7 +1589,7 @@ function BracketBuilder({
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ numSlots: n }),
     });
-    setStatusMsg(res.ok ? "Bracket listo. Asigna los participantes a cada pareja." : (await res.json()).error || "Error");
+    setStatusMsg(res.ok ? "Estructura manual creada" : (await res.json()).error || "Error");
     setLoading(false); router.refresh();
   };
 
@@ -1113,7 +1609,6 @@ function BracketBuilder({
     router.refresh();
   };
 
-  const [actionLoading, setActionLoading] = useState<string | null>(null);
 
   const scheduleMatch = async (matchId: string, roundId: string) => {
     if (!scheduleDate) return;
@@ -1128,16 +1623,16 @@ function BracketBuilder({
     router.refresh();
   };
 
-  const withToast = async (key: string, action: () => Promise<any>, successMsg: string) => {
-    setActionLoading(key);
+  // `key` identifica la operación en curso para quien la dispare (el toast ya
+  // informa el progreso al usuario).
+  const withToast = async (key: string, action: () => Promise<unknown>, successMsg: string) => {
     showToast("Procesando...", "loading");
     try {
       await action();
       showToast(successMsg, "success");
     } catch {
-      showToast("Error al procesar", "error");
+      showToast(`Error al procesar (${key})`, "error");
     }
-    setActionLoading(null);
     router.refresh();
   };
 
@@ -1147,10 +1642,10 @@ function BracketBuilder({
     }, "Enfrentamiento eliminado");
   };
 
-  const resolveName = (id: string) => allParticipants.find((p) => p.id === id)?.name || "---";
+  const resolveName = (id: string | null) => id ? allParticipants.find((p) => p.id === id)?.name || "---" : "---";
 
   // Determine winner side (works for team and individual tournaments)
-  const getWinnerSide = (match: any): "team1" | "team2" | null => {
+  const getWinnerSide = (match: BracketMatch): "team1" | "team2" | null => {
     if (match.winnerId) return match.winnerId === match.team1Id ? "team1" : "team2";
     if ((match.score1 ?? 0) > (match.score2 ?? 0)) return "team1";
     if ((match.score2 ?? 0) > (match.score1 ?? 0)) return "team2";
@@ -1158,8 +1653,9 @@ function BracketBuilder({
   };
 
   // Open confirmation dialog before marking winner
-  const confirmMarkWinner = (matchId: string, winnerId: string, roundId: string) => {
-    const currentMatch = rounds.find((r: any) => r.id === roundId)?.matches.find((m: any) => m.id === matchId);
+  const confirmMarkWinner = (matchId: string, winnerId: string | null, roundId: string) => {
+    if (!winnerId) return;
+    const currentMatch = rounds.find((r) => r.id === roundId)?.matches.find((m) => m.id === matchId);
     if (!currentMatch) return;
     const winnerName = resolveName(winnerId);
     const loserId = currentMatch.team1Id === winnerId ? currentMatch.team2Id : currentMatch.team1Id;
@@ -1174,7 +1670,7 @@ function BracketBuilder({
     setWinnerConfirm(null);
     setMarking(matchId);
 
-    const currentMatch = rounds.find((r: any) => r.id === roundId)?.matches.find((m: any) => m.id === matchId);
+    const currentMatch = rounds.find((r) => r.id === roundId)?.matches.find((m) => m.id === matchId);
     const isTeam1Winner = currentMatch?.team1Id === winnerId;
     const score1 = isTeam1Winner ? 1 : 0;
     const score2 = isTeam1Winner ? 0 : 1;
@@ -1191,41 +1687,35 @@ function BracketBuilder({
       return;
     }
 
-    // Auto-advance
-    const currentRound = rounds.find((r: any) => r.id === roundId);
-    if (currentRound) {
-      const nextRoundNum = currentRound.roundNumber + 1;
-      const nextRound = rounds.find((r: any) => r.roundNumber === nextRoundNum);
-      if (nextRound) {
-        const emptyMatch = nextRound.matches.find((m: any) => !m.team1Id || !m.team2Id);
-        if (emptyMatch) {
-          const slot = emptyMatch.team1Id ? "team2" : "team1";
-          await fetch(`/api/tournaments/${tournamentId}/bracket/assign`, {
-            method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ matchId: emptyMatch.id, slot, participantId: winnerId }),
-          });
-        }
-      } else {
-        await fetch(`/api/tournaments/${tournamentId}`, {
-          method: "PATCH", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ status: "COMPLETED" }),
-        });
-        setStatusMsg(`CAMPEÓN: ${resolveName(winnerId)} ha ganado el torneo!`);
-      }
-    }
+    // El avance y el cierre del torneo los resuelve el servidor.
 
     setMarkSuccess(matchId);
     setTimeout(() => { setMarkSuccess(null); setMarking(null); }, 1500);
     router.refresh();
   };
 
-  // Revoke a winner (set match back to PENDING)
-  const revokeWinner = async (matchId: string, roundId: string) => {
+  // Revocar un ganador: confirmación del sistema y luego el endpoint real
+  // (deshace avance, borra resultados y devuelve el torneo a curso si hizo falta)
+  const executeRevoke = async () => {
+    if (!revokeConfirm) return;
+    const { matchId, roundId } = revokeConfirm;
+    setRevokeConfirm(null);
     setMarking(matchId);
-    await fetch(`/api/tournaments/${tournamentId}/rounds/${roundId}/matches/${matchId}`, {
-      method: "PATCH", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ winnerId: null, status: "PENDING", score1: null, score2: null }),
-    });
+    try {
+      const res = await fetch(`/api/tournaments/${tournamentId}/rounds/${roundId}/matches/${matchId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ winnerId: null, status: "PENDING", score1: null, score2: null }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: "Error desconocido" }));
+        setStatusMsg(err.error || "No se pudo revocar el resultado");
+      } else {
+        setStatusMsg("Resultado revocado");
+      }
+    } catch {
+      setStatusMsg("Error de conexión al revocar");
+    }
     setMarking(null);
     router.refresh();
   };
@@ -1260,7 +1750,7 @@ function BracketBuilder({
   };
 
   const addMatchToRound = async (roundId: string) => {
-    const round = rounds.find((r: any) => r.id === roundId);
+    const round = rounds.find((r) => r.id === roundId);
     const nextPos = round?.matches?.length || 0;
     await withToast(`add-match-${roundId}`, async () => {
       await fetch(`/api/tournaments/${tournamentId}/rounds/${roundId}/matches`, {
@@ -1271,7 +1761,6 @@ function BracketBuilder({
   };
 
   const hasRounds = rounds.length > 0;
-  const label = isIndividual ? "Jugadores" : "Equipos";
 
   return (
     <div className="space-y-4">
@@ -1285,15 +1774,36 @@ function BracketBuilder({
         <Card className="p-8 text-center">
           <Swords className="w-12 h-12 text-muted mx-auto mb-4 opacity-30" />
           <p className="text-muted text-base font-medium mb-4">
-            {allParticipants.length < 2
-              ? `Se necesitan al menos 2 participantes (actual: ${allParticipants.length})`
-              : `Inicializa el bracket para comenzar a posicionar a los ${allParticipants.length} participantes`}
+            {participantCount < 2
+              ? `Se necesitan al menos 2 participantes aprobados (actual: ${participantCount})`
+              : "Aún no se genera la llave"}
           </p>
+          {canEdit && unsupportedDouble && (
+            <p className="text-xs text-red-400 mb-4">
+              Doble eliminación no disponible para más de 8 participantes
+            </p>
+          )}
           {canEdit && (
-            <Button onClick={initBracket} disabled={loading || allParticipants.length < 2} size="lg">
-              {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Swords className="w-5 h-5" />}
-              {loading ? "Creando..." : "Inicializar Bracket"}
-            </Button>
+            <div className="flex flex-col items-center gap-3">
+              <Button
+                onClick={() => setGenerateConfirm(true)}
+                disabled={loading || participantCount < 2 || unsupportedDouble}
+                size="lg"
+                className="min-h-[44px]"
+              >
+                {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Swords className="w-5 h-5" />}
+                {loading ? "Generando..." : "Generar llave"}
+              </Button>
+              {manualEditable && participantCount >= 2 && (
+                <button
+                  onClick={initBracket}
+                  disabled={loading}
+                  className="text-xs text-muted hover:text-gold underline underline-offset-4 disabled:opacity-50"
+                >
+                  Construcción manual
+                </button>
+              )}
+            </div>
           )}
         </Card>
       )}
@@ -1301,27 +1811,25 @@ function BracketBuilder({
       {hasRounds && (
         <>
           {/* Pool - compact */}
-          {canEdit && allParticipants.length > 0 && (
+          {canEdit && manualEditable && allParticipants.length > 0 && (
             <div className="flex items-center gap-2 px-3 py-2 bg-surface border border-border rounded-xl text-xs text-muted flex-wrap">
               <Users className="w-3.5 h-3.5 text-gold shrink-0" />
               <span className="font-medium">{allParticipants.filter((p) => !assignedIds.has(p.id)).length} de {allParticipants.length} libres</span>
-              <span className="text-muted">·</span>
-              <span className="text-muted">Asígnale un slot a cada participante</span>
             </div>
           )}
 
           {/* Rounds */}
           <div className="overflow-x-auto pb-4 -mx-4 sm:mx-0">
             <div className="flex gap-4 sm:gap-6 px-4 sm:px-0 min-w-max">
-              {rounds.map((round: any) => (
+              {rounds.map((round) => (
                 <div key={round.id} ref={round.roundNumber === rounds.length ? lastRoundRef : null} className="flex flex-col gap-3 min-w-[260px] sm:min-w-[300px]">
                   {/* Round header */}
                   <div className="flex items-center justify-between mb-1 px-1">
                     <h3 className="text-xs font-black text-gold uppercase tracking-widest">Ronda {round.roundNumber}</h3>
-                    {canEdit && (
+                    {canEdit && manualEditable && (
                       <button
                         onClick={() => handleDeleteClick(round.id)}
-                        className={`p-1.5 rounded-lg transition-all duration-200 ${
+                        className={`min-h-[40px] min-w-[40px] flex items-center justify-center rounded-lg transition-all duration-200 ${
                           deleteConfirm === round.id
                             ? "bg-red-500/20 text-red-400 scale-110"
                             : "text-muted hover:text-red-400"
@@ -1339,7 +1847,7 @@ function BracketBuilder({
                   <p className="text-[10px] text-muted text-center">{round.matches.length} enfrentamiento{round.matches.length !== 1 ? "s" : ""}</p>
 
                   {/* Matches */}
-                  {round.matches.map((match: any) => {
+                  {round.matches.map((match) => {
                     const p1 = allParticipants.find((p) => p.id === match.team1Id) || null;
                     const p2 = allParticipants.find((p) => p.id === match.team2Id) || null;
                     const hasBoth = p1 && p2;
@@ -1350,7 +1858,7 @@ function BracketBuilder({
                       <div key={match.id} className="bg-surface border border-border rounded-xl overflow-hidden">
                         <div className="bg-gold/5 px-3 py-1.5 border-b border-border flex items-center justify-between">
                           <span className="text-[10px] text-muted font-bold uppercase tracking-wider">
-                            #{match.bracketPosition !== null ? match.bracketPosition + 1 : "?"}
+                            #{typeof match.bracketPosition === "number" ? match.bracketPosition + 1 : "?"}
                           </span>
                           {isDecided && (
                             <span className="text-[9px] text-green-400 font-bold">Completado</span>
@@ -1380,7 +1888,7 @@ function BracketBuilder({
                                   <button
                                     onClick={() => confirmMarkWinner(match.id, match.team1Id, round.id)}
                                     disabled={marking === match.id}
-                                    className="px-3 py-1.5 bg-gold text-background rounded-lg text-[10px] font-bold hover:bg-gold-hover transition-all disabled:opacity-70 min-w-[72px] flex items-center justify-center gap-1"
+                                    className="px-3 py-2 min-h-[40px] bg-gold text-background rounded-lg text-[10px] font-bold hover:bg-gold-hover transition-all disabled:opacity-70 min-w-[72px] flex items-center justify-center gap-1"
                                   >
                                     {marking === match.id ? (
                                       <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -1393,24 +1901,28 @@ function BracketBuilder({
                                 )}
                                 {isDecided && canEdit && (
                                   <button
-                                    onClick={() => revokeWinner(match.id, round.id)}
+                                    onClick={() => setRevokeConfirm({ matchId: match.id, roundId: round.id })}
                                     disabled={marking === match.id}
-                                    className="px-2 py-1 text-[10px] text-red-400 border border-red-500/30 rounded-lg hover:bg-red-500/10 transition-colors"
+                                    className="inline-flex items-center justify-center gap-1 px-2.5 py-2 min-h-[40px] text-[10px] text-red-400 border border-red-500/30 rounded-lg hover:bg-red-500/10 transition-colors"
                                     title="Revocar victoria"
                                   >
-                                    ↩
+                                    <Undo2 className="w-3.5 h-3.5" />
                                   </button>
                                 )}
-                                <button onClick={() => removeSlot(match.id, "team1")} className="p-1 text-muted hover:text-red-400 transition-colors">
-                                  <X className="w-3.5 h-3.5" />
-                                </button>
+                                {canEdit && manualEditable && (
+                                  <button onClick={() => removeSlot(match.id, "team1")} className="inline-flex items-center justify-center p-2 min-w-[40px] min-h-[40px] text-muted hover:text-red-400 transition-colors" title="Quitar del slot">
+                                    <X className="w-3.5 h-3.5" />
+                                  </button>
+                                )}
                               </>
-                            ) : (
+                            ) : manualEditable ? (
                               <SlotSelector label="Slot A" participants={allParticipants} onSelect={(pid) => assignSlot(match.id, "team1", pid)} />
+                            ) : (
+                              <span className="text-xs text-muted">Por asignar</span>
                             )}
-                            {!p1 && !p2 && canEdit && (
+                            {!p1 && !p2 && canEdit && manualEditable && (
                               <button onClick={() => deleteMatch(match.id, round.id)}
-                                className="p-1 text-muted hover:text-red-400 transition-colors ml-auto" title="Eliminar enfrentamiento">
+                                className="p-2 min-w-[40px] min-h-[40px] text-muted hover:text-red-400 transition-colors ml-auto" title="Eliminar enfrentamiento">
                                 <Trash2 className="w-3.5 h-3.5" />
                               </button>
                             )}
@@ -1418,7 +1930,13 @@ function BracketBuilder({
 
                           <div className="flex items-center gap-2 text-[10px] text-muted font-bold">
                             <div className="flex-1 h-px bg-border" />
-                            {!hasBoth ? <span className="px-2 py-0.5 bg-gold/10 text-gold rounded text-[9px]">BYE</span> : <span className="px-3 py-0.5 bg-gold/10 text-gold rounded text-[9px]">VS</span>}
+                            {!p1 || !p2 ? (
+                              <span className="px-2 py-1 bg-gold/10 text-gold rounded text-[9px]">
+                                {!p1 && !p2 ? "Por definir" : "Sin rival (pasa de ronda)"}
+                              </span>
+                            ) : (
+                              <span className="px-3 py-0.5 bg-gold/10 text-gold rounded text-[9px]">VS</span>
+                            )}
                             <div className="flex-1 h-px bg-border" />
                           </div>
 
@@ -1444,7 +1962,7 @@ function BracketBuilder({
                                   <button
                                     onClick={() => confirmMarkWinner(match.id, match.team2Id, round.id)}
                                     disabled={marking === match.id}
-                                    className="px-3 py-1.5 bg-gold text-background rounded-lg text-[10px] font-bold hover:bg-gold-hover transition-all disabled:opacity-70 min-w-[72px] flex items-center justify-center gap-1"
+                                    className="px-3 py-2 min-h-[40px] bg-gold text-background rounded-lg text-[10px] font-bold hover:bg-gold-hover transition-all disabled:opacity-70 min-w-[72px] flex items-center justify-center gap-1"
                                   >
                                     {marking === match.id ? (
                                       <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -1455,12 +1973,16 @@ function BracketBuilder({
                                     )}
                                   </button>
                                 )}
-                                <button onClick={() => removeSlot(match.id, "team2")} className="p-1 text-muted hover:text-red-400 transition-colors">
-                                  <X className="w-3.5 h-3.5" />
-                                </button>
+                                {canEdit && manualEditable && (
+                                  <button onClick={() => removeSlot(match.id, "team2")} className="inline-flex items-center justify-center p-2 min-w-[40px] min-h-[40px] text-muted hover:text-red-400 transition-colors" title="Quitar del slot">
+                                    <X className="w-3.5 h-3.5" />
+                                  </button>
+                                )}
                               </>
-                            ) : (
+                            ) : manualEditable ? (
                               <SlotSelector label="Slot B" participants={allParticipants} onSelect={(pid) => assignSlot(match.id, "team2", pid)} />
+                            ) : (
+                              <span className="text-xs text-muted">Por asignar</span>
                             )}
                           </div>
 
@@ -1471,19 +1993,19 @@ function BracketBuilder({
                                 <div className="flex gap-1">
                                   <input type="datetime-local" value={scheduleDate}
                                     onChange={(e) => setScheduleDate(e.target.value)}
-                                    className="flex-1 px-2 py-1 bg-background border border-border rounded text-[10px]" />
+                                    className="flex-1 px-2 py-2 min-h-[40px] bg-background border border-border rounded text-[11px]" />
                                   <button onClick={() => scheduleMatch(match.id, round.id)}
-                                    className="px-2 py-1 bg-gold text-background rounded text-[9px] font-bold">OK</button>
+                                    className="px-3 min-h-[40px] bg-gold text-background rounded text-[10px] font-bold">Guardar</button>
                                   <button onClick={() => setSchedulingMatch(null)}
-                                    className="px-2 py-1 border border-border rounded text-[9px]">X</button>
+                                    className="px-3 min-h-[40px] border border-border rounded text-[10px] text-muted">Cancelar</button>
                                 </div>
                               ) : (
                                 <button onClick={() => {
                                   setSchedulingMatch(`${match.id}-${round.id}`);
                                   setScheduleDate(match.scheduledAt ? new Date(match.scheduledAt).toISOString().slice(0, 16) : "");
                                 }}
-                                  className="text-[9px] text-gold hover:underline flex items-center gap-1">
-                                  🕐 {match.scheduledAt ? "Cambiar horario" : "Programar"}
+                                  className="min-h-[40px] w-full text-[10px] text-gold hover:underline flex items-center justify-center gap-1.5">
+                                  <Clock className="w-3.5 h-3.5" /> {match.scheduledAt ? "Cambiar horario" : "Programar"}
                                 </button>
                               )}
                             </div>
@@ -1492,7 +2014,10 @@ function BracketBuilder({
                           {/* Scheduled time display */}
                           {match.scheduledAt && (
                             <div className="pt-1">
-                              <span className="text-[9px] text-muted">🕐 {new Date(match.scheduledAt).toLocaleDateString("es-MX", { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}</span>
+                              <span className="text-[9px] text-muted inline-flex items-center gap-1">
+                                <Clock className="w-3 h-3" />
+                                {new Date(match.scheduledAt).toLocaleDateString("es-MX", { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
+                              </span>
                             </div>
                           )}
 
@@ -1510,9 +2035,9 @@ function BracketBuilder({
                   })}
 
                   {/* Add match to round */}
-                  {canEdit && (
+                  {canEdit && manualEditable && (
                     <button onClick={() => addMatchToRound(round.id)}
-                      className="w-full py-2 border-2 border-dashed border-border rounded-xl text-xs text-muted hover:border-gold/50 hover:text-gold hover:bg-gold/5 transition-all flex items-center justify-center gap-1">
+                      className="w-full py-2.5 min-h-[40px] border-2 border-dashed border-border rounded-xl text-xs text-muted hover:border-gold/50 hover:text-gold hover:bg-gold/5 transition-all flex items-center justify-center gap-1">
                       <Plus className="w-3.5 h-3.5" /> Agregar combate
                     </button>
                   )}
@@ -1522,17 +2047,16 @@ function BracketBuilder({
           </div>
 
           {/* Add round button */}
-          {canEdit && (
+          {canEdit && manualEditable && (
             <div className="flex justify-center pt-2">
               <button onClick={addRound}
-                className="px-6 py-3 border-2 border-dashed border-gold/50 rounded-xl text-sm text-gold font-bold hover:bg-gold/10 hover:border-gold transition-all flex items-center gap-2">
+                className="px-6 py-3 min-h-[44px] border-2 border-dashed border-gold/50 rounded-xl text-sm text-gold font-bold hover:bg-gold/10 hover:border-gold transition-all flex items-center gap-2">
                 <Plus className="w-5 h-5" /> Agregar Ronda
               </button>
             </div>
           )}
         </>
       )}
-      <ToastContainer />
 
       {/* Winner confirmation dialog */}
       <dialog ref={confirmDialogRef}
@@ -1541,31 +2065,106 @@ function BracketBuilder({
         {winnerConfirm && (
           <div className="p-6">
             <div className="flex items-center gap-3 mb-4">
-              <div className="w-10 h-10 rounded-full bg-gold/10 flex items-center justify-center">🏆</div>
+              <div className="w-10 h-10 rounded-full bg-gold/10 flex items-center justify-center">
+                <Crown className="w-5 h-5 text-gold" />
+              </div>
               <div>
                 <h2 className="font-bold text-lg text-foreground">Declarar ganador</h2>
-                <p className="text-xs text-muted">Esta acción avanzará al ganador a la siguiente ronda</p>
+                <p className="text-xs text-muted">El servidor moverá al ganador a la siguiente ronda</p>
               </div>
             </div>
             <div className="bg-background border border-border rounded-xl p-4 mb-5 space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="text-green-400 font-bold text-sm">👑 {winnerConfirm.winnerName}</span>
-                <span className="text-xs text-green-400 font-bold">GANADOR</span>
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-green-400 font-bold text-sm inline-flex items-center gap-1.5 min-w-0">
+                  <Crown className="w-4 h-4 shrink-0" />
+                  <span className="truncate">{winnerConfirm.winnerName}</span>
+                </span>
+                <span className="text-xs text-green-400 font-bold shrink-0">GANADOR</span>
               </div>
-              <div className="flex items-center justify-between">
-                <span className="text-muted text-sm line-through">{winnerConfirm.loserName}</span>
-                <span className="text-xs text-muted">Perdedor</span>
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-muted text-sm line-through truncate">{winnerConfirm.loserName}</span>
+                <span className="text-xs text-muted shrink-0">Perdedor</span>
               </div>
             </div>
             <div className="flex gap-2">
               <Button onClick={() => { confirmDialogRef.current?.close(); executeMarkWinner(); }}
-                className="flex-1 bg-green-600 hover:bg-green-700">Confirmar</Button>
+                className="flex-1 min-h-[44px] bg-green-600 hover:bg-green-700">Confirmar</Button>
               <Button variant="outline" onClick={() => { confirmDialogRef.current?.close(); setWinnerConfirm(null); }}
-                className="flex-1">Cancelar</Button>
+                className="flex-1 min-h-[44px]">Cancelar</Button>
             </div>
           </div>
         )}
       </dialog>
+
+      {/* ── Modal: generar llave ── */}
+      {generateConfirm && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-surface border border-border rounded-2xl p-6 max-w-sm w-full text-center">
+            <div className="w-14 h-14 rounded-full bg-gold/10 flex items-center justify-center mx-auto mb-4">
+              <Swords className="w-7 h-7 text-gold" />
+            </div>
+            <h2 className="text-lg font-bold text-foreground mb-1">Generar llave</h2>
+            <p className="text-sm text-muted mb-2">
+              Se crearán <strong className="text-gold">{estimatedRounds}</strong>{" "}
+              {estimatedRounds === 1 ? "ronda" : "rondas"} con los {participantCount} participantes
+              aprobados; el torneo pasará a <strong className="text-gold">En curso</strong>.
+            </p>
+            <p className="text-xs text-muted mb-6">
+              {bracketType === "ROUND_ROBIN"
+                ? "Todos los cruces se juegan una vez."
+                : bracketType === "DOUBLE_ELIMINATION"
+                  ? "Se generan las ramas superior e inferior."
+                  : "Cada derrota elimina; los sin rival avanzan."}
+            </p>
+            <div className="flex gap-3">
+              <button
+                onClick={generateBracket}
+                disabled={loading}
+                className="flex-1 py-3 min-h-[44px] bg-gold text-background font-bold rounded-xl text-sm hover:bg-gold-hover disabled:opacity-50"
+              >
+                {loading ? "GENERANDO..." : "GENERAR LLAVE"}
+              </button>
+              <button
+                onClick={() => setGenerateConfirm(false)}
+                className="flex-1 py-3 min-h-[44px] border border-border text-muted rounded-xl text-sm hover:border-gold/50"
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Modal: revocar resultado ── */}
+      {revokeConfirm && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-surface border border-border rounded-2xl p-6 max-w-sm w-full text-center">
+            <div className="w-14 h-14 rounded-full bg-red-500/15 flex items-center justify-center mx-auto mb-4">
+              <Undo2 className="w-7 h-7 text-red-400" />
+            </div>
+            <h2 className="text-lg font-bold text-foreground mb-1">Revocar resultado</h2>
+            <p className="text-sm text-muted mb-6">
+              El partido volverá a pendiente, se borrará el marcador, el ganador
+              regresará a su slot y los resultados se eliminan.
+            </p>
+            <div className="flex gap-3">
+              <button
+                onClick={executeRevoke}
+                disabled={marking !== null}
+                className="flex-1 py-3 min-h-[44px] bg-red-600 text-white font-bold rounded-xl text-sm hover:bg-red-700 disabled:opacity-50"
+              >
+                REVOGAR
+              </button>
+              <button
+                onClick={() => setRevokeConfirm(null)}
+                className="flex-1 py-3 min-h-[44px] border border-border text-muted rounded-xl text-sm hover:border-gold/50"
+              >
+                Volver
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1661,15 +2260,29 @@ function SlotSelector({ label, participants, onSelect }: {
   );
 }
 
-function EditTournamentForm({ tournament }: { tournament: any }) {
+const gameLabels: Record<string, string> = {
+  LEAGUE_OF_LEGENDS: "League of Legends",
+  VALORANT: "Valorant",
+  FORTNITE: "Fortnite",
+  LOL_1V1: "LoL 1v1",
+};
+
+const bracketLabels: Record<string, string> = {
+  SINGLE_ELIMINATION: "Eliminación Simple",
+  DOUBLE_ELIMINATION: "Doble Eliminación",
+  ROUND_ROBIN: "Round Robin",
+  SWISS: "Suizo",
+};
+
+function EditTournamentForm({ tournament }: { tournament: ManageTournament }) {
   const router = useRouter();
   const [editing, setEditing] = useState(false);
   const [loading, setLoading] = useState(false);
   const [form, setForm] = useState({
     name: tournament.name,
     description: tournament.description || "",
-    maxTeams: tournament.maxTeams,
-    entryFee: tournament.entryFee ? tournament.entryFee.toString() : "",
+    maxTeams: String(tournament.maxTeams),
+    entryFee: tournament.entryFee ? String(tournament.entryFee) : "",
     location: tournament.location || "",
     eventDate: tournament.eventDate ? tournament.eventDate.slice(0, 16) : "",
   });
@@ -1682,12 +2295,12 @@ function EditTournamentForm({ tournament }: { tournament: any }) {
           <button onClick={() => setEditing(true)} className="text-[10px] text-gold hover:underline">Editar</button>
         </div>
         <div className="grid grid-cols-3 gap-2 text-xs">
-          <div><span className="text-muted">Juego:</span> {tournament.game.replace(/_/g, " ")}</div>
+          <div><span className="text-muted">Juego:</span> {gameLabels[tournament.game?.toUpperCase()] ?? tournament.game}</div>
           <div><span className="text-muted">Cupos:</span> {tournament.maxTeams}</div>
           <div><span className="text-muted">Cuota:</span> {tournament.entryFee ? `$${tournament.entryFee}` : "Gratis"}</div>
           <div><span className="text-muted">Fecha:</span> {new Date(tournament.eventDate).toLocaleDateString()}</div>
           <div><span className="text-muted">Ubicación:</span> {tournament.location || "---"}</div>
-          <div><span className="text-muted">Bracket:</span> {tournament.bracketType.replace(/_/g, " ")}</div>
+          <div><span className="text-muted">Modalidad:</span> {bracketLabels[tournament.bracketType] ?? tournament.bracketType}</div>
         </div>
       </Card>
     );

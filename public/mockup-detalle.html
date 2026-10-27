@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Valorant Showdown — GamersLand</title>
+<style>
+  :root{
+    --bg:#0A0E1A; --surface:#141B2D; --surface2:#182136; --border:#1E2A45; --border2:#2A3A55;
+    --fg:#E8E6E3; --muted:#7B8FA1; --gold:#C8AA6E; --gold-h:#B89A5E; --cyan:#0397AB;
+    --green:#00B853; --red:#E84057;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{background:var(--bg)}
+  body{background:var(--bg);color:var(--fg);font-family:"Geist","Inter",-apple-system,"Segoe UI",Roboto,sans-serif;font-size:15px;line-height:1.5;-webkit-font-smoothing:antialiased}
+  a{color:inherit;text-decoration:none}
+  .wrap{max-width:1160px;margin:0 auto;padding:0 20px}
+
+  /* NAV */
+  nav{border-bottom:1px solid var(--border);background:rgba(10,14,26,.9);backdrop-filter:blur(8px);position:sticky;top:0;z-index:50}
+  .nav-in{max-width:1160px;margin:0 auto;padding:0 20px;height:60px;display:flex;align-items:center;justify-content:space-between}
+  .logo{font-weight:800;letter-spacing:.14em;font-size:15px}
+  .logo b{color:var(--gold);font-weight:800}
+  .nav-links{display:flex;gap:26px;font-size:14px;color:var(--muted)}
+  .nav-links a:hover{color:var(--fg)}
+  .btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;height:44px;padding:0 22px;border-radius:8px;font-weight:700;font-size:14.5px;border:1px solid transparent;cursor:pointer;transition:.15s}
+  .btn-gold{background:var(--gold);color:#0A0E1A}
+  .btn-gold:hover{background:var(--gold-h)}
+  .btn-ghost{background:transparent;color:var(--fg);border-color:var(--border2)}
+  .btn-ghost:hover{border-color:var(--gold);color:var(--gold)}
+  .btn-off{background:transparent;color:var(--muted);border:1px dashed var(--border2);cursor:not-allowed;opacity:.9}
+  .btn-sm{height:40px;padding:0 16px;font-size:13.5px}
+  .btn-block{width:100%}
+
+  /* HERO */
+  .hero{position:relative;min-height:320px;display:flex;align-items:flex-end;overflow:hidden;border-bottom:1px solid var(--border)}
+  .hero-img{position:absolute;inset:0;background:url('/covers/valorant.jpg') center 28% / cover no-repeat;filter:saturate(1.05)}
+  .hero-fade{position:absolute;inset:0;background:linear-gradient(180deg,rgba(10,14,26,.55) 0%,rgba(10,14,26,.35) 40%,rgba(10,14,26,.97) 100%),linear-gradient(90deg,rgba(10,14,26,.8) 0%,rgba(10,14,26,.15) 55%,rgba(10,14,26,0) 100%)}
+  .hero-in{position:relative;width:100%;max-width:1160px;margin:0 auto;padding:34px 20px 30px}
+  .chips{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px}
+  .chip{display:inline-flex;align-items:center;gap:7px;height:26px;padding:0 11px;border-radius:999px;font-size:11.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;border:1px solid var(--border2);background:rgba(20,27,45,.75);color:var(--muted)}
+  .chip-game{color:var(--fg);border-color:rgba(200,170,110,.45)}
+  .chip-live{color:#5fd6ff;border-color:rgba(3,151,171,.55);background:rgba(3,151,171,.12)}
+  .dot{width:7px;height:7px;border-radius:50%;background:var(--cyan);box-shadow:0 0 0 0 rgba(3,151,171,.6);animation:pulse 2s infinite}
+  @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(3,151,171,.55)}70%{box-shadow:0 0 0 7px rgba(3,151,171,0)}100%{box-shadow:0 0 0 0 rgba(3,151,171,0)}}
+  h1{font-size:44px;line-height:1.08;font-weight:800;letter-spacing:-.02em;margin-bottom:14px;text-shadow:0 2px 18px rgba(0,0,0,.5)}
+  .hero-meta{display:flex;flex-wrap:wrap;gap:8px 22px;color:#B9C4D4;font-size:14px;margin-bottom:22px}
+  .hero-meta span{display:inline-flex;align-items:center;gap:8px}
+  .hero-meta svg{opacity:.75}
+  .hero-cta{display:flex;gap:12px;flex-wrap:wrap;align-items:center}
+  .hint{font-size:12.5px;color:#9FB0C6}
+
+  /* STATS */
+  .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin:-26px auto 0;position:relative;z-index:5;max-width:1160px;padding:0 20px}
+  .stat{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px 18px;display:flex;gap:13px;align-items:center;min-height:78px}
+  .stat-ic{width:40px;height:40px;border-radius:10px;background:var(--surface2);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;color:var(--gold);flex:none}
+  .stat-l{font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);font-weight:600}
+  .stat-v{font-size:14.5px;line-height:1.35;font-weight:700;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;max-width:205px}
+  .bar{height:6px;border-radius:99px;background:var(--border);margin-top:7px;overflow:hidden}
+  .bar i{display:block;height:100%;border-radius:99px;background:linear-gradient(90deg,var(--cyan),#2ec7dd)}
+
+  /* GRID */
+  .grid{display:grid;grid-template-columns:1fr 340px;gap:22px;max-width:1160px;margin:26px auto 60px;padding:0 20px;align-items:start}
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:22px 24px}
+  .card + .card{margin-top:22px}
+  .sec-h{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px}
+  .sec-t{display:flex;align-items:center;gap:11px;font-size:17px;font-weight:800;letter-spacing:-.01em}
+  .sec-t::before{content:"";width:4px;height:18px;border-radius:2px;background:var(--gold)}
+  .link{font-size:13px;color:#35C4DC;font-weight:600;display:inline-flex;gap:6px;align-items:center}
+  .link:hover{color:#2ec7dd}
+
+  /* DESCRIPCIÓN */
+  .desc{color:#C4CEDC;font-size:14.5px}
+  .desc p{margin-bottom:6px}
+  .desc .k{color:var(--fg);font-weight:600}
+  .tags{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}
+  .tag{font-size:12px;font-weight:600;color:var(--muted);border:1px solid var(--border);background:var(--surface2);padding:5px 11px;border-radius:7px}
+
+  /* PREMIOS */
+  .prize{display:flex;align-items:center;gap:15px;padding:14px 4px;border-top:1px solid var(--border)}
+  .prize:first-of-type{border-top:0}
+  .pos{width:44px;height:44px;border-radius:11px;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:15px;flex:none;border:1px solid var(--border2);background:var(--surface2);color:var(--muted)}
+  .pos.p1{background:linear-gradient(160deg,#3d3218,#241d0d);border-color:rgba(200,170,110,.5);color:var(--gold);box-shadow:0 0 18px rgba(200,170,110,.12)}
+  .pos.p2{background:#1b2438;color:#B9C4D4}
+  .prize-n{font-weight:700;font-size:14.5px}
+  .prize-s{font-size:12.5px;color:var(--muted)}
+  .prize-v{margin-left:auto;font-weight:800;font-size:15px;color:var(--gold);text-align:right;white-space:nowrap}
+  .prize-v.plain{color:var(--fg)}
+
+  /* BRACKET PREVIEW */
+  .bracket{display:flex;gap:0;overflow-x:auto;padding:6px 2px 12px}
+  .bcol{display:flex;flex-direction:column;justify-content:space-around;gap:14px;min-width:210px;position:relative;padding-right:34px}
+  .bcol:last-child{padding-right:0;min-width:230px}
+  .bhead{font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);font-weight:700;text-align:center;margin-bottom:2px}
+  .match{position:relative;background:var(--surface2);border:1px solid var(--border);border-radius:10px;overflow:hidden}
+  .vs-mid{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);background:#0F1524;border:1px solid var(--border2);border-radius:6px;padding:1px 9px;font-size:10px;font-weight:800;letter-spacing:.14em;color:#9FB0C6;z-index:2}
+  .mrow{display:flex;align-items:center;gap:9px;padding:9px 11px;font-size:13.5px}
+  .mrow + .mrow{border-top:1px solid var(--border)}
+  .mrow.win{background:rgba(0,184,83,.08)}
+  .mrow.win .mname{color:#4ade80;font-weight:700}
+  .ava{width:22px;height:22px;border-radius:6px;background:#22304d;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:800;color:#9fb0c6;flex:none}
+  .mname{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .mscore{margin-left:auto;font-weight:800;font-variant-numeric:tabular-nums;color:var(--muted)}
+  .mrow.win .mscore{color:var(--fg)}
+  .vs{margin-left:auto;font-size:11px;font-weight:800;color:var(--muted);letter-spacing:.1em}
+  /* conectores */
+  .mwrap{position:relative}
+  .mwrap::after{content:"";position:absolute;right:-17px;top:50%;width:17px;height:1.5px;background:#35496A}
+  .bcol:first-child::after{content:"";position:absolute;right:-17px;top:56px;height:80px;width:1.5px;background:#35496A}
+  .bcol:last-child .mwrap::before{content:"";position:absolute;left:-17px;top:50%;width:17px;height:1.5px;background:var(--border2)}
+  .conn{display:none}
+  .scroll-hint{display:none;font-size:12px;color:var(--muted);text-align:center;margin-top:4px}
+
+  /* ASIDE */
+  .aside{position:sticky;top:84px;display:flex;flex-direction:column;gap:16px}
+  .side-h{font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);font-weight:700;margin-bottom:13px}
+  .kv{display:flex;justify-content:space-between;align-items:center;padding:9px 0;font-size:14px;border-top:1px dashed var(--border)}
+  .kv:first-of-type{border-top:0}
+  .kv .k{color:var(--muted)}
+  .kv .v{font-weight:700}
+  .kv .v.gold{color:var(--gold)}
+  .closed{display:inline-flex;align-items:center;gap:7px;font-size:12.5px;font-weight:700;color:#B9C4D4;background:#1B2539;border:1px solid var(--border2);border-radius:999px;padding:5px 12px}
+  .org{display:flex;align-items:center;gap:11px;padding:9px 0}
+  .org .ava{width:34px;height:34px;border-radius:9px;font-size:12.5px;background:#2a2113;color:var(--gold);border:1px solid rgba(200,170,110,.3)}
+  .org-n{font-weight:700;font-size:14px}
+  .org-r{font-size:12px;color:var(--muted)}
+  .team{display:flex;align-items:center;gap:10px;padding:8px 0;font-size:14px}
+  .team .ava{width:30px;height:30px;border-radius:8px}
+  .team .nm{font-weight:600}
+  .seed{margin-left:auto;font-size:11px;color:var(--muted);font-weight:700;letter-spacing:.06em}
+  .see{margin-top:10px}
+
+  /* MOVIL */
+  @media (max-width:900px){
+    h1{font-size:30px}
+    .hero{min-height:250px}
+    .stats{grid-template-columns:repeat(2,1fr);margin-top:-20px}
+    .grid{grid-template-columns:1fr;gap:16px}
+    .aside{position:static}
+    .nav-links{display:none}
+    .stat-v{max-width:150px;font-size:14.5px}
+    .bcol{min-width:190px;padding-right:26px}
+    .scroll-hint{display:block}
+    .btn{height:46px}
+    .prize-v{font-size:14px}
+  }
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="nav-in">
+    <div class="logo">GAMERS<b>LAND</b></div>
+    <div class="nav-links">
+      <a href="#">Torneos</a><a href="#">Equipos</a><a href="#">Cómo participar</a><a href="#">Premios</a>
+    </div>
+    <a class="btn btn-ghost btn-sm" href="#">Entrar</a>
+  </div>
+</nav>
+
+<header class="hero">
+  <div class="hero-img"></div>
+  <div class="hero-fade"></div>
+  <div class="hero-in">
+    <div class="chips">
+      <span class="chip chip-game">Valorant</span>
+      <span class="chip chip-live"><span class="dot"></span>En curso</span>
+      <span class="chip">Doble eliminación</span>
+    </div>
+    <h1>Valorant Showdown</h1>
+    <div class="hero-meta">
+      <span><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M8 2v4M16 2v4M3 10h18"/></svg>15 de julio · 18:00</span>
+      <span><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 10c0 6-8 12-8 12S4 16 4 10a8 8 0 1 1 16 0Z"/><circle cx="12" cy="10" r="3"/></svg>Sala VIP — Escenario Principal</span>
+      <span><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/></svg>8 equipos</span>
+    </div>
+    <div class="hero-cta">
+      <a class="btn btn-gold" href="#"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M5 12h14M13 6l6 6-6 6"/></svg>Ver llave</a>
+      <button class="btn btn-off" disabled><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>Inscribirme</button>
+      <span class="hint">Inscripciones cerradas — el torneo ya comenzó</span>
+    </div>
+  </div>
+</header>
+
+<section class="stats">
+  <div class="stat">
+    <div class="stat-ic"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M8 2v4M16 2v4M3 10h18"/></svg></div>
+    <div><div class="stat-l">Fecha</div><div class="stat-v">15 de julio · 18:00</div></div>
+  </div>
+  <div class="stat">
+    <div class="stat-ic"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 10c0 6-8 12-8 12S4 16 4 10a8 8 0 1 1 16 0Z"/><circle cx="12" cy="10" r="3"/></svg></div>
+    <div style="min-width:0"><div class="stat-l">Ubicación</div><div class="stat-v" title="Sala VIP — Escenario Principal">Sala VIP — Escenario Principal</div></div>
+  </div>
+  <div class="stat">
+    <div class="stat-ic"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/></svg></div>
+    <div style="flex:1;min-width:0"><div class="stat-l">Participantes</div><div class="stat-v">4 de 8 equipos</div><div class="bar"><i style="width:50%"></i></div></div>
+  </div>
+  <div class="stat">
+    <div class="stat-ic"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v10M9.5 9.5c0-1 1-1.7 2.5-1.7s2.5.7 2.5 1.7-1 1.5-2.5 1.9-2.5.9-2.5 1.9 1 1.7 2.5 1.7 2.5-.7 2.5-1.7"/></svg></div>
+    <div><div class="stat-l">Cuota</div><div class="stat-v">$150 MXN</div></div>
+  </div>
+</section>
+
+<div class="grid">
+  <main>
+    <section class="card">
+      <div class="sec-h"><div class="sec-t">El torneo</div></div>
+      <div class="desc">
+        <p><span class="k">Torneo de Valorant 5v5.</span> Modalidad de doble eliminación entre equipos.</p>
+        <p>Mapas: Bind, Haven y Ascent (sistema de ban/pick). Todos los mapas al mejor de 1 hasta la final; la final es al mejor de 3.</p>
+      </div>
+      <div class="tags">
+        <span class="tag">5 contra 5</span><span class="tag">Doble eliminación</span><span class="tag">Ban / Pick de mapas</span><span class="tag">Final al mejor de 3</span>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="sec-h"><div class="sec-t">Premios</div><a class="link" href="#">Ver todos<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 6l6 6-6 6"/></svg></a></div>
+      <div class="prize">
+        <div class="pos p1">1</div>
+        <div><div class="prize-n">1er Lugar</div><div class="prize-s">Trofeo y premio en efectivo</div></div>
+        <div class="prize-v">$4,000 MXN<br><span style="font-size:12px;font-weight:600;color:#9FB0C6">+ Periféricos</span></div>
+      </div>
+      <div class="prize">
+        <div class="pos p2">2</div>
+        <div><div class="prize-n">2do Lugar</div><div class="prize-s">Premio en efectivo</div></div>
+        <div class="prize-v plain">$2,000 MXN</div>
+      </div>
+      <div class="prize">
+        <div class="pos">MVP</div>
+        <div><div class="prize-n">MVP del Torneo</div><div class="prize-s">Mejor jugador individual</div></div>
+        <div class="prize-v plain">Audífonos Gaming</div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="sec-h"><div class="sec-t">Llave</div><a class="link" href="#">Ver llave completa<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 6l6 6-6 6"/></svg></a></div>
+      <div class="bracket">
+        <div class="bcol">
+          <div class="bhead">Ganadores · Ronda 1</div>
+          <div class="mwrap"><div class="match">
+            <div class="mrow win"><span class="ava">LP</span><span class="mname">Los Pro Players</span><span class="mscore">13</span></div>
+            <div class="mrow"><span class="ava">ES</span><span class="mname">Elite Squad</span><span class="mscore">8</span></div>
+          </div></div>
+          <div class="mwrap"><div class="match">
+            <div class="mrow"><span class="ava">DW</span><span class="mname">Dark Warriors</span><span class="mscore">6</span></div>
+            <div class="mrow win"><span class="ava">SG</span><span class="mname">Shadow Gaming</span><span class="mscore">13</span></div>
+          </div></div>
+        </div>
+        <div class="bcol">
+          <div class="bhead">Ganadores · Ronda 2</div>
+          <div class="mwrap"><div class="match">
+            <div class="mrow"><span class="ava">LP</span><span class="mname">Los Pro Players</span></div>
+            <div class="mrow"><span class="ava">SG</span><span class="mname">Shadow Gaming</span></div>
+            <span class="vs-mid">VS</span>
+          </div>
+          <span class="conn"></span></div>
+        </div>
+      </div>
+      <div class="scroll-hint">Desliza para ver más rondas →</div>
+    </section>
+  </main>
+
+  <aside class="aside">
+    <div class="card">
+      <div class="side-h">Inscripción</div>
+      <div class="kv"><span class="k">Estado</span><span class="closed"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>Cerradas</span></div>
+      <div class="kv"><span class="k">Cupo</span><span class="v">4 de 8 equipos</span></div>
+      <div class="kv"><span class="k">Cuota</span><span class="v gold">$150 MXN</span></div>
+      <div class="kv"><span class="k">Formato</span><span class="v">5 contra 5</span></div>
+      <div class="bar" style="margin-top:14px"><i style="width:50%"></i></div>
+      <div style="margin-top:16px"><button class="btn btn-off btn-block" disabled>Inscripciones cerradas</button></div>
+    </div>
+
+    <div class="card">
+      <div class="side-h">Organizadores</div>
+      <div class="org"><span class="ava">OR</span><div><div class="org-n">organizador1</div><div class="org-r">Organizador</div></div></div>
+      <div class="org"><span class="ava">OL</span><div><div class="org-n">org_lol</div><div class="org-r">Organizador</div></div></div>
+    </div>
+
+    <div class="card">
+      <div class="side-h">Equipos inscritos</div>
+      <div class="team"><span class="ava">LP</span><span class="nm">Los Pro Players</span></div>
+      <div class="team"><span class="ava">SG</span><span class="nm">Shadow Gaming</span></div>
+      <div class="team"><span class="ava">DW</span><span class="nm">Dark Warriors</span></div>
+      <div class="team"><span class="ava">ES</span><span class="nm">Elite Squad</span></div>
+      <div class="see"><a class="link" href="#">Ver todos los equipos<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 6l6 6-6 6"/></svg></a></div>
+    </div>
+  </aside>
+</div>
+
+</body>
+</html>

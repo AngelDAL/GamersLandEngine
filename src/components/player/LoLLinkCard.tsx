@@ -4,14 +4,18 @@
  * LoLLinkCard — vincula o desvincula la cuenta de Riot del usuario autenticado.
  *
  * Estados:
- *   - Sin vincular: form con inputs Riot ID + región
- *   - Vinculado: muestra Riot ID, nivel y enlace "Ver perfil de LoL" a /players/[userId]
+ *   - Sin vincular: formulario con Riot ID + región, con CTA principal
+ *   - Vinculado: muestra el Riot ID, el nivel y el enlace al perfil público
+ *
+ * Los mensajes (éxito y error) van con sonner; sonner publica cada aviso
+ * como región viva, así que también se lee en lectores de pantalla.
  */
 import { useState, useTransition, useEffect } from "react";
 import Link from "next/link";
+import { toast } from "sonner";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Link2, AlertTriangle, Check, Loader2, Copy, Share2, X, ExternalLink } from "lucide-react";
+import { Link2, Loader2, Copy, Share2, X, ExternalLink, Check } from "lucide-react";
 import { useRouter } from "next/navigation";
 
 type Props = {
@@ -29,17 +33,18 @@ const REGION_LABELS: Record<string, string> = {
   euw1: "EUW", eun1: "EUNE",
   kr: "KR", jp1: "JP",
   oc1: "OCE", tr1: "TR", ru: "RU",
+  ph2: "Filipinas", sg2: "Singapur", th2: "Tailandia",
+  tw2: "Taiwán", vn2: "Vietnam",
 };
 
 export function LoLLinkCard(props: Props) {
   const router = useRouter();
   const { userId } = props;
   const [linked, setLinked] = useState(props.initialLinked);
+  const [linkedRiotId, setLinkedRiotId] = useState(props.initialRiotId);
   const [riotId, setRiotId] = useState(props.initialRiotId ?? "");
   const [region, setRegion] = useState(props.initialRegion ?? "la1");
   const [level, setLevel] = useState<number | null>(props.initialLevel);
-  const [err, setErr] = useState<string | null>(null);
-  const [okMsg, setOkMsg] = useState<string | null>(null);
   const [shareUrl, setShareUrl] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [isPending, startTransition] = useTransition();
@@ -52,24 +57,29 @@ export function LoLLinkCard(props: Props) {
   }, [shareUrl]);
 
   function onLink() {
-    setErr(null); setOkMsg(null);
     startTransition(async () => {
-      const res = await fetch("/api/profile/riot-link", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ riotId, region }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        setErr(data.error ?? "Error al vincular.");
-        return;
+      try {
+        const res = await fetch("/api/profile/riot-link", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ riotId, region }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          toast.error(data.error ?? "No se pudo vincular la cuenta.");
+          return;
+        }
+        const profile = data.profile ?? {};
+        setLinked(true);
+        setLinkedRiotId(`${profile.gameName}#${profile.tagLine}`);
+        setLevel(typeof profile.summonerLevel === "number" ? profile.summonerLevel : null);
+        toast.success(`Vinculado: ${profile.gameName}#${profile.tagLine}`);
+        setShareUrl(`${window.location.origin}/players/${userId}`);
+        setCopied(false);
+        router.refresh();
+      } catch {
+        toast.error("Error de conexión. Intenta de nuevo.");
       }
-      setLinked(true);
-      setLevel(data.profile.summonerLevel);
-      setOkMsg(`Vinculado: ${data.profile.gameName}#${data.profile.tagLine}`);
-      setShareUrl(`${window.location.origin}/players/${userId}`);
-      setCopied(false);
-      router.refresh();
     });
   }
 
@@ -80,18 +90,6 @@ export function LoLLinkCard(props: Props) {
         League of Legends
       </h2>
 
-      {err && (
-        <div className="mb-3 p-2 rounded border border-red-500/30 bg-red-500/10 text-red-300 text-xs flex items-start gap-2">
-          <AlertTriangle className="w-3 h-3 mt-0.5 shrink-0" />
-          <span>{err}</span>
-        </div>
-      )}
-      {okMsg && (
-        <div className="mb-3 p-2 rounded border border-green-500/30 bg-green-500/10 text-green-300 text-xs flex items-start gap-2">
-          <Check className="w-3 h-3 mt-0.5 shrink-0" />
-          <span>{okMsg}</span>
-        </div>
-      )}
       {shareUrl && (
         <div
           role="status"
@@ -107,9 +105,9 @@ export function LoLLinkCard(props: Props) {
               type="button"
               onClick={() => setShareUrl(null)}
               aria-label="Cerrar"
-              className="text-muted hover:text-foreground transition-colors"
+              className="min-h-[40px] min-w-[40px] -my-1 flex items-center justify-center text-muted hover:text-foreground transition-colors"
             >
-              <X className="w-3 h-3" />
+              <X className="w-4 h-4" />
             </button>
           </div>
           <div className="flex items-center gap-2 px-2 pb-2 pt-1.5">
@@ -127,7 +125,7 @@ export function LoLLinkCard(props: Props) {
                   /* clipboard blocked — leave URL visible for manual copy */
                 }
               }}
-              className="shrink-0 inline-flex items-center gap-1 px-2 py-1 rounded border border-gold/40 text-gold text-xs hover:bg-gold/10 transition-colors"
+              className="shrink-0 inline-flex items-center justify-center gap-1 min-h-[40px] px-3 rounded border border-gold/40 text-gold text-xs hover:bg-gold/10 transition-colors"
             >
               {copied ? (
                 <>
@@ -144,55 +142,76 @@ export function LoLLinkCard(props: Props) {
       )}
 
       {!linked ? (
-        <div className="space-y-3">
-          <p className="text-xs text-muted">
-            Vincula tu Riot ID para mostrar tu perfil LoL en{" "}
-            <span className="text-gold">/players/[tu-id]</span>. Tu historial de
-            partidas se guarda aunque te desvincules.
-          </p>
+        <form
+          className="space-y-3"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (riotId.includes("#")) onLink();
+          }}
+        >
           <div>
-            <label className="text-xs text-muted block mb-1">Riot ID</label>
+            <label className="text-xs text-muted block mb-1" htmlFor="riot-id">
+              Riot ID
+            </label>
             <input
+              id="riot-id"
               type="text"
               value={riotId}
               onChange={(e) => setRiotId(e.target.value)}
               placeholder="GameName#TAG"
-              className="w-full bg-background border border-border rounded px-3 py-2 text-sm text-foreground"
+              autoComplete="off"
+              className="w-full bg-background border border-border rounded px-3 py-2.5 text-sm text-foreground"
             />
           </div>
           <div>
-            <label className="text-xs text-muted block mb-1">Región</label>
+            <label className="text-xs text-muted block mb-1" htmlFor="riot-region">
+              Región
+            </label>
             <select
+              id="riot-region"
               value={region}
               onChange={(e) => setRegion(e.target.value)}
-              className="w-full bg-background border border-border rounded px-3 py-2 text-sm text-foreground"
+              className="w-full bg-background border border-border rounded px-3 py-2.5 text-sm text-foreground"
             >
               {Object.entries(REGION_LABELS).map(([code, label]) => (
                 <option key={code} value={code}>{label}</option>
               ))}
             </select>
           </div>
-          <Button onClick={onLink} disabled={isPending || !riotId.includes("#")} size="sm" className="w-full">
-            {isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : "Vincular"}
+          <Button
+            type="submit"
+            disabled={isPending || !riotId.includes("#")}
+            className="w-full"
+          >
+            {isPending ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              "Vincular cuenta de LoL"
+            )}
           </Button>
-        </div>
+        </form>
       ) : (
         <div className="space-y-3">
           <div className="flex items-center justify-between text-sm">
-            <div>
-              <p className="text-foreground font-medium">{props.initialRiotId}</p>
+            <div className="min-w-0">
+              <p className="text-foreground font-medium truncate">
+                {linkedRiotId ?? "Cuenta vinculada"}
+              </p>
               <p className="text-xs text-muted">
-                {REGION_LABELS[props.initialRegion ?? "la1"] ?? props.initialRegion}
+                {REGION_LABELS[props.initialRegion ?? region] ?? region}
                 {level !== null && (
                   <span className="ml-2">Nivel {level}</span>
                 )}
               </p>
             </div>
-            <span className="w-2 h-2 rounded-full bg-green-400" />
+            <span
+              className="w-2 h-2 rounded-full bg-green-400 shrink-0"
+              title="Cuenta vinculada"
+            />
           </div>
           <Link
             href={`/players/${userId}`}
-            className="inline-flex w-full items-center justify-center gap-1.5 rounded bg-gold text-background hover:bg-gold-hover font-bold px-3 py-1.5 text-sm transition-colors"
+            className="inline-flex w-full items-center justify-center gap-1.5 rounded bg-gold text-background hover:bg-gold-hover font-bold px-3 py-2.5 text-sm transition-colors"
           >
             <ExternalLink className="w-3 h-3" />
             Ver perfil de LoL

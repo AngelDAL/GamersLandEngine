@@ -1,21 +1,42 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useEffect, useRef, useState } from "react";
 
 type Props = {
   scheduledAt: string | null;
   status: string;
-  location?: string | null;
   large?: boolean;
+  /** Se dispara una sola vez cuando la cuenta regresiva llega a cero
+   *  (para refrescar el estado del partido en vez de solo contar). */
+  onExpire?: () => void;
 };
 
-export function MatchCountdown({ scheduledAt, status, location, large }: Props) {
-  const [now, setNow] = useState(Date.now());
+export function MatchCountdown({ scheduledAt, status, large, onExpire }: Props) {
+  const [now, setNow] = useState(() => Date.now());
+  const expiredRef = useRef(false);
+  const onExpireRef = useRef(onExpire);
+  useEffect(() => {
+    onExpireRef.current = onExpire;
+  }, [onExpire]);
 
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), large ? 1000 : 30000);
     return () => clearInterval(timer);
   }, [large]);
+
+  // Resetea el disparador si cambia el partido programado
+  useEffect(() => {
+    expiredRef.current = false;
+  }, [scheduledAt]);
+
+  const isPastEarly = scheduledAt ? new Date(scheduledAt).getTime() - now < 0 : false;
+
+  useEffect(() => {
+    if (isPastEarly && !expiredRef.current) {
+      expiredRef.current = true;
+      onExpireRef.current?.();
+    }
+  }, [isPastEarly]);
 
   if (status === "COMPLETED") return null;
   if (!scheduledAt) return null;
@@ -38,13 +59,15 @@ export function MatchCountdown({ scheduledAt, status, location, large }: Props) 
     if (status === "IN_PROGRESS") {
       return (
         <div className={`${baseClass} text-green-400 bg-green-500/10 border border-green-500/30 flex items-center gap-2 text-lg`}>
-          <span>🔴 EN VIVO</span>
+          <span className="w-2.5 h-2.5 rounded-full bg-green-400 animate-pulse" aria-hidden />
+          En vivo
         </div>
       );
     } else if (status === "PENDING") {
       return (
         <div className={`${baseClass} text-red-400 bg-red-500/10 border border-red-500/30 flex items-center gap-2 text-lg`}>
-          <span>🔴 ATRASADO {days > 0 ? `${days}d ` : ""}{hours > 0 ? `${hours}h ` : ""}{minutes}min</span>
+          <span className="w-2.5 h-2.5 rounded-full bg-red-400" aria-hidden />
+          Atrasado {days > 0 ? `${days}d ` : ""}{hours > 0 ? `${hours}h ` : ""}{minutes}min
         </div>
       );
     }
@@ -78,7 +101,7 @@ export function MatchCountdown({ scheduledAt, status, location, large }: Props) 
   if (days > 0) {
     return (
       <div className={`${baseClass} bg-gold/10 border border-gold/20 text-gold flex items-center gap-2 text-lg`}>
-        <span>🕐 {days}d {hours}h · {formatDate} {formatTime}</span>
+        <span>{days}d {hours}h · {formatDate} {formatTime}</span>
       </div>
     );
   }
@@ -86,25 +109,25 @@ export function MatchCountdown({ scheduledAt, status, location, large }: Props) 
   if (hours > 0) {
     return (
       <div className={`${baseClass} bg-gold/10 border border-gold/20 text-gold flex items-center gap-2 text-lg`}>
-        <span>🕐 {formatDate} {formatTime}</span>
+        <span>{formatDate} {formatTime}</span>
       </div>
     );
   } else if (minutes > 10) {
     return (
       <div className={`${baseClass} bg-gold/10 border border-gold/20 text-gold flex items-center gap-2 text-lg`}>
-        <span>🕐 {formatDate} {formatTime} · {hours}h {minutes}min</span>
+        <span>{formatDate} {formatTime} · {hours}h {minutes}min</span>
       </div>
     );
   } else if (minutes > 0) {
     return (
       <div className={`${baseClass} bg-amber-500/10 border border-amber-500/30 text-amber-300 flex items-center gap-2 text-lg`}>
-        <span>🚀 {formatDate} {formatTime} · en {minutes}min</span>
+        <span>{formatDate} {formatTime} · en {minutes}min</span>
       </div>
     );
   }
   return (
     <div className={`${baseClass} bg-red-500/10 border border-red-500/30 text-red-400 flex items-center gap-2 text-lg`}>
-      <span>🔥 Ahora</span>
+      <span>Es ahora</span>
     </div>
   );
 }

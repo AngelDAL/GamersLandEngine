@@ -1,7 +1,29 @@
+/**
+ * POST /api/riot/tournament  (ADMIN u ORGANIZER)
+ *
+ * Crea el torneo en Riot bajo un provider ya registrado y guarda los IDs
+ * en la fila del torneo. Cuerpo: { tournamentId, providerId?, name? }
+ *
+ * En modo live, si el torneo todavía no tiene provider, se responde
+ * "Modo live no configurado" en lugar de un error crudo de Riot.
+ * Público: no — requiere sesión con rol ADMIN u ORGANIZER.
+ */
 import { NextResponse } from "next/server";
+import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { riotService } from "@/lib/riot-service";
+import { isLiveMode, liveNotConfigured, riotErrorResponse } from "../_shared";
+
+const tournamentSchema = z.object({
+  tournamentId: z.string().trim().min(1, "Falta el identificador del torneo."),
+  providerId: z
+    .number({ message: "El provider debe ser un número." })
+    .int("El provider debe ser un número entero.")
+    .positive("El provider debe ser un número entero.")
+    .optional(),
+  name: z.string().trim().min(1).max(120).optional(),
+});
 
 export async function POST(req: Request) {
   try {
@@ -15,50 +37,44 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "No tienes permisos" }, { status: 403 });
     }
 
-    const body = await req.json().catch(() => ({}));
-    const tournamentId: string | undefined = body?.tournamentId;
-    const explicitProviderId: number | undefined =
-      typeof body?.providerId === "number" ? body.providerId : undefined;
-
-    if (!tournamentId || typeof tournamentId !== "string") {
+    const raw = await req.json().catch(() => ({}));
+    const parsed = tournamentSchema.safeParse(raw);
+    if (!parsed.success) {
       return NextResponse.json(
-        { error: "tournamentId is required and must be a string" },
+        { error: parsed.error.issues[0]?.message ?? "Datos inválidos." },
         { status: 400 },
       );
     }
+    const { tournamentId, providerId: explicitProviderId, name } = parsed.data;
 
-    // Verify the tournament exists
     const tournament = await prisma.tournament.findUnique({
       where: { id: tournamentId },
     });
-
     if (!tournament) {
-      return NextResponse.json({ error: "Tournament not found" }, { status: 404 });
+      return NextResponse.json({ error: "Torneo no encontrado." }, { status: 404 });
     }
 
-    // Resolve provider: explicit > stored > error
-    let providerId = explicitProviderId ?? tournament.riotProviderId ?? null;
+    // Provider: el explícito > el guardado. Sin ninguno, en live no se finge.
+    const providerId = explicitProviderId ?? tournament.riotProviderId ?? null;
     if (!providerId) {
+      if (isLiveMode()) return liveNotConfigured();
       return NextResponse.json(
-        { error: "Provider not registered. Call /api/riot/provider first." },
+        {
+          error:
+            "Este torneo todavía no tiene provider en Riot. Regístralo primero (POST /api/riot/provider).",
+        },
         { status: 400 },
       );
     }
 
-    // Create the Riot tournament
-    const tournamentName = body?.name ?? tournament.name;
     const riotTournamentId = await riotService.createTournament(
       providerId,
-      tournamentName,
+      name ?? tournament.name,
     );
 
-    // Update the DB tournament with Riot IDs
     await prisma.tournament.update({
       where: { id: tournamentId },
-      data: {
-        riotProviderId: providerId,
-        riotTournamentId: riotTournamentId,
-      },
+      data: { riotProviderId: providerId, riotTournamentId },
     });
 
     return NextResponse.json(
@@ -66,11 +82,6 @@ export async function POST(req: Request) {
       { status: 201 },
     );
   } catch (error) {
-    const message =
-      error instanceof Error
-        ? error.message
-        : "Unknown error creating tournament";
-    console.error("[API] POST /api/riot/tournament failed:", message);
-    return NextResponse.json({ error: message }, { status: 500 });
+    return riotErrorResponse(error, "crear torneo");
   }
 }

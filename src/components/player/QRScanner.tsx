@@ -8,8 +8,18 @@ type Props = {
   onClose: () => void;
 };
 
+type ScannerInstance = {
+  start: (
+    device: { facingMode: string },
+    config: { fps: number; qrbox: { width: number; height: number } },
+    onScan: (text: string) => void,
+    onError: () => void,
+  ) => Promise<unknown>;
+  stop: () => Promise<unknown>;
+};
+
 export function QRScanner({ onScan, onClose }: Props) {
-  const scannerRef = useRef<any>(null);
+  const scannerRef = useRef<ScannerInstance | null>(null);
   const startedRef = useRef(false);
   const [error, setError] = useState("");
 
@@ -20,7 +30,7 @@ export function QRScanner({ onScan, onClose }: Props) {
       if (cancelled) return;
       const Html5Qrcode = mod.Html5Qrcode;
       const scanner = new Html5Qrcode("qr-reader");
-      scannerRef.current = scanner;
+      scannerRef.current = scanner as unknown as ScannerInstance;
 
       scanner
         .start(
@@ -35,7 +45,7 @@ export function QRScanner({ onScan, onClose }: Props) {
           startedRef.current = true;
         })
         .catch(() => {
-          if (!cancelled) setError("No se pudo acceder a la cámara. Usa la búsqueda por username.");
+          if (!cancelled) setError("No se pudo acceder a la cámara. Usa la búsqueda por nombre.");
         });
     });
 

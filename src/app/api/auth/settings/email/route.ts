@@ -1,9 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
+import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
-import { sendEmail, buildVerificationEmail } from "@/lib/email";
+
+const changeEmailSchema = z.object({
+  email: z.string().trim().email("Correo inválido"),
+  currentPassword: z.string().optional(),
+});
 
 export async function POST(req: NextRequest) {
   try {
@@ -12,36 +17,39 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "No autorizado" }, { status: 401 });
     }
 
-    const { email: rawEmail, currentPassword } = await req.json();
-    const email = rawEmail?.trim().toLowerCase();
-
-    if (!email) {
-      return NextResponse.json({ error: "Correo requerido" }, { status: 400 });
+    const body = await req.json();
+    const parsed = changeEmailSchema.safeParse(body);
+    if (!parsed.success) {
+      return NextResponse.json(
+        { error: parsed.error.issues[0]?.message ?? "Datos inválidos" },
+        { status: 400 }
+      );
     }
-
-    // Email format validation
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(email)) {
-      return NextResponse.json({ error: "Correo inválido" }, { status: 400 });
-    }
+    const email = parsed.data.email.toLowerCase();
+    const { currentPassword } = parsed.data;
 
     const user = await prisma.user.findUnique({ where: { id: session.user.id } });
     if (!user) {
       return NextResponse.json({ error: "Usuario no encontrado" }, { status: 404 });
     }
 
-    // If user already has a password, verify it
-    if (user.passwordHash) {
-      if (!currentPassword) {
-        return NextResponse.json(
-          { error: "Debes ingresar tu contraseña actual para cambiar el correo" },
-          { status: 403 }
-        );
-      }
-      const valid = await bcrypt.compare(currentPassword, user.passwordHash);
-      if (!valid) {
-        return NextResponse.json({ error: "Contraseña incorrecta" }, { status: 403 });
-      }
+    // Cambiar el correo exige la contraseña actual siempre: es una operación
+    // sensible y no hay cuentas legítimas sin contraseña.
+    if (!user.passwordHash) {
+      return NextResponse.json(
+        { error: "Cuenta sin contraseña. Contacta al administrador." },
+        { status: 403 }
+      );
+    }
+    if (!currentPassword) {
+      return NextResponse.json(
+        { error: "Debes ingresar tu contraseña actual para cambiar el correo" },
+        { status: 403 }
+      );
+    }
+    const valid = await bcrypt.compare(currentPassword, user.passwordHash);
+    if (!valid) {
+      return NextResponse.json({ error: "Contraseña incorrecta" }, { status: 403 });
     }
 
     // Already taken?
@@ -64,16 +72,27 @@ export async function POST(req: NextRequest) {
       },
     });
 
-    // Send verification email
-    const baseUrl = process.env.AUTH_URL || "https://gamersland.tabtap.dev";
-    const { subject, html } = buildVerificationEmail(baseUrl, verificationToken);
-    await sendEmail({ to: email, subject, html }).catch((err) =>
-      console.error("[EMAIL] Failed to send verification:", err)
-    );
+    // Send verification email. Sin clave de Resend la verificación se degrada
+    // con un mensaje claro en lugar de un 500. El import es dinámico porque
+    // `src/lib/email.ts` instancia `new Resend(...)` al cargarse y lanza
+    // cuando falta la variable.
+    let emailSent = false;
+    if (process.env.RESEND_API_KEY) {
+      try {
+        const { sendEmail, buildVerificationEmail } = await import("@/lib/email");
+        const baseUrl = process.env.AUTH_URL || "https://gamersland.tabtap.dev";
+        const { subject, html } = buildVerificationEmail(baseUrl, verificationToken);
+        emailSent = (await sendEmail({ to: email, subject, html })).sent;
+      } catch (err) {
+        console.error("[EMAIL] Error al enviar verificación:", err);
+      }
+    }
 
     return NextResponse.json({
       success: true,
-      message: "Correo actualizado. Revisa tu bandeja para verificarlo.",
+      message: emailSent
+        ? "Correo actualizado. Revisa tu bandeja para verificarlo."
+        : "Correo actualizado. Verificación por correo no disponible; contacta al administrador.",
     });
   } catch (err) {
     console.error("Error updating email:", err);

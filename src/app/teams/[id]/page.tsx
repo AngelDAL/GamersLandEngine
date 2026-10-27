@@ -8,7 +8,7 @@ import { TeamChat } from "@/components/chat/TeamChat";
 import { LaneSelector } from "@/components/team/LaneSelector";
 import {
   Users, Shield, CheckCircle, XCircle, X, UserPlus, Swords,
-  MessageSquare, Clock, ArrowLeft,
+  Clock, ArrowLeft,
 } from "lucide-react";
 import Link from "next/link";
 import { LeaveTeamButton, MemberActionButton, RemoveMemberButton, PendingAction } from "./TeamActions";
@@ -78,7 +78,7 @@ export default async function TeamPage({ params }: { params: Promise<{ id: strin
               </p>
               <p className="text-muted text-xs">
                 <strong>{team.captain.username}</strong> te ha invitado a unirte a <strong>{team.name}</strong>.
-                {myPending.message && <span className="block mt-1 italic">"{myPending.message}"</span>}
+                {myPending.message && <span className="block mt-1 italic">&ldquo;{myPending.message}&rdquo;</span>}
               </p>
             </div>
             <div className="flex gap-2 shrink-0">
@@ -114,7 +114,7 @@ export default async function TeamPage({ params }: { params: Promise<{ id: strin
               </p>
               <p className="text-muted text-xs">
                 Solicitaste unirte a <strong>{team.name}</strong>. Espera a que el capitán revise tu solicitud.
-                {myRequest.message && <span className="block mt-1 italic">"{myRequest.message}"</span>}
+                {myRequest.message && <span className="block mt-1 italic">&ldquo;{myRequest.message}&rdquo;</span>}
               </p>
             </div>
             <div className="flex gap-2 shrink-0">

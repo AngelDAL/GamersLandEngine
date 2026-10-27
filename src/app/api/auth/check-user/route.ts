@@ -3,15 +3,16 @@ import { prisma } from "@/lib/prisma";
 
 /**
  * GET /api/auth/check-user?username=xxx
- * Returns whether the username exists and if the user needs a password.
- * Used by the login page for the two-step flow.
+ * Indica si el usuario existe y si necesita contraseña.
+ * Todos los usuarios necesitan contraseña — el viejo criterio por rol quedó
+ * obsoleto cuando todos las cuentas pasaron a tener passwordHash.
  */
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const username = searchParams.get("username");
 
   if (!username || username.trim().length === 0) {
-    return NextResponse.json({ exists: false, needsPassword: false });
+    return NextResponse.json({ exists: false, needsPassword: true });
   }
 
   const user = await prisma.user.findUnique({
@@ -20,14 +21,12 @@ export async function GET(req: Request) {
   });
 
   if (!user) {
-    // New user — will be created as PLAYER, no password needed
-    return NextResponse.json({ exists: false, needsPassword: false });
+    return NextResponse.json({ exists: false, needsPassword: true });
   }
 
-  const needsPassword = user.role === "ADMIN" || user.role === "EXPOSITOR" || user.role === "EJECUTIVO";
   return NextResponse.json({
     exists: true,
     role: user.role,
-    needsPassword,
+    needsPassword: true,
   });
 }

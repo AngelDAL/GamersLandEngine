@@ -21,12 +21,14 @@ export function WelcomeHero({
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
-    setMounted(true);
-    if (typeof window !== "undefined") {
+    // setTimeout(0): evita setState síncrono en el cuerpo del efecto
+    const id = setTimeout(() => {
+      setMounted(true);
       try {
         if (window.localStorage.getItem(STORAGE_KEY) === "1") setHidden(true);
-      } catch {}
-    }
+      } catch { /* almacenamiento puede estar bloqueado */ }
+    }, 0);
+    return () => clearTimeout(id);
   }, []);
 
   const skip = () => {
@@ -97,7 +99,7 @@ export function WelcomeHero({
             <Users className="w-3.5 h-3.5 text-[#C8AA6E]" /> Forma tu equipo
           </span>
           <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white/[0.04] border border-white/10">
-            <Gamepad2 className="w-3.5 h-3.5 text-[#C8AA6E]" /> Draft y brackets en tiempo real
+            <Gamepad2 className="w-3.5 h-3.5 text-[#C8AA6E]" /> Llaves en tiempo real
           </span>
         </div>
 

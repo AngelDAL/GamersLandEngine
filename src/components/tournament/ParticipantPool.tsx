@@ -4,17 +4,17 @@ import { useState } from "react";
 import { Search, Users, GripVertical } from "lucide-react";
 
 type Participant = { id: string; name: string };
+type SlotRef = { matchId: string; slot: "team1" | "team2"; label: string };
 
 type Props = {
   participants: Participant[];
   assignedIds: Set<string>;
-  onAssignToSlot: (participantId: string, slotLabel: string) => void;
-  slots: { matchId: string; label: string }[];
+  onAssignToSlot: (participantId: string, slotKey: string) => void;
+  slots: SlotRef[];
 };
 
 export function ParticipantPool({ participants, assignedIds, onAssignToSlot, slots }: Props) {
   const [search, setSearch] = useState("");
-  const [selectedFor, setSelectedFor] = useState<string | null>(null);
 
   const unassigned = participants.filter((p) => !assignedIds.has(p.id));
   const filtered = unassigned.filter((p) =>
@@ -45,7 +45,7 @@ export function ParticipantPool({ participants, assignedIds, onAssignToSlot, slo
           placeholder="Buscar..."
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          className="w-full pl-7 pr-2 py-1.5 bg-background border border-border rounded-lg text-xs text-foreground placeholder-muted focus:outline-none focus:border-gold"
+          className="w-full pl-7 pr-2 min-h-[40px] py-2 bg-background border border-border rounded-lg text-xs text-foreground placeholder-muted focus:outline-none focus:border-gold"
         />
       </div>
 
@@ -65,17 +65,19 @@ export function ParticipantPool({ participants, assignedIds, onAssignToSlot, slo
                 {p.name[0].toUpperCase()}
               </div>
               <span className="flex-1 text-xs font-medium truncate">{p.name}</span>
+              {/* Siempre visible: en táctil no existe nada que solo aparezca al pasar el cursor */}
               <select
                 onChange={(e) => {
                   if (e.target.value) onAssignToSlot(p.id, e.target.value);
                   e.target.value = "";
                 }}
-                className="text-[8px] px-1.5 py-1 bg-gold/10 text-gold rounded border border-gold/30 cursor-pointer opacity-0 group-hover:opacity-100 transition-opacity"
+                className="min-h-[40px] px-2 py-2 text-[10px] bg-gold/10 text-gold rounded border border-gold/30 cursor-pointer shrink-0"
                 defaultValue=""
+                aria-label={`Asignar a ${p.name}`}
               >
-                <option value="" disabled>Slot</option>
-                {slots.filter((s) => !assignedIds.has(p.id)).map((s) => (
-                  <option key={`${s.matchId}-${s.label}`} value={`${s.matchId}:${s.label}`}>
+                <option value="">Asignar a...</option>
+                {slots.map((s) => (
+                  <option key={`${s.matchId}-${s.slot}`} value={`${s.matchId}:${s.slot}`}>
                     {s.label}
                   </option>
                 ))}

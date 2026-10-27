@@ -57,28 +57,75 @@ async function riotFetch(url: string): Promise<Response | null> {
   }
 }
 
+// ─── Resultado con motivo (para errores honestos en las rutas) ───────────────
+
+/**
+ * Por qué falló una consulta a Riot. Permite que `/api/profile/riot-link`
+ * responda 404 "cuenta no encontrada", 429 "demasiadas consultas" o 503
+ * "sin configurar" en lugar de un 500 genérico: `null` en el fetch no
+ * distingue rate limit de red, y esa distinción es exactamente lo que pide
+ * el brief W4.
+ */
+export type RiotLookupFailure =
+  | "no-key"
+  | "network"
+  | "not-found"
+  | "rate-limited"
+  | "upstream";
+
+export type RiotLookup<T> =
+  | { ok: true; value: T }
+  | { ok: false; failure: RiotLookupFailure; status?: number };
+
+function isFailure(
+  res: Response | null,
+): { ok: false; failure: RiotLookupFailure; status?: number } | null {
+  if (!res) return { ok: false, failure: "network" };
+  if (res.status === 404) return { ok: false, failure: "not-found", status: 404 };
+  if (res.status === 429) {
+    console.warn("[riot-account] HTTP 429 — límite de peticiones de Riot alcanzado");
+    return { ok: false, failure: "rate-limited", status: 429 };
+  }
+  if (!res.ok) {
+    console.warn(`[riot-account] consulta rechazada: HTTP ${res.status} ${res.statusText}`);
+    return { ok: false, failure: "upstream", status: res.status };
+  }
+  return null;
+}
+
+/**
+ * Look up a Riot account by Riot ID (gameName#tagLine) → PUUID, keeping the
+ * failure reason (404 / 429 / red / sin clave) for the caller.
+ */
+export async function lookupAccountByRiotId(
+  gameName: string,
+  tagLine: string,
+  region: RiotRegion,
+): Promise<RiotLookup<RiotAccount>> {
+  if (!RIOT_API_KEY_HELPER.get()) return { ok: false, failure: "no-key" };
+  const cluster = getRegionalCluster(region);
+  const encodedName = encodeURIComponent(gameName);
+  const encodedTag = encodeURIComponent(tagLine);
+  const url = `https://${cluster}.api.riotgames.com/riot/account/v1/accounts/by-riot-id/${encodedName}/${encodedTag}`;
+  const res = await riotFetch(url);
+  const failure = isFailure(res);
+  if (failure) return failure;
+  const data = (await res!.json()) as { puuid: string; gameName: string; tagLine: string };
+  return { ok: true, value: { puuid: data.puuid, gameName: data.gameName, tagLine: data.tagLine } };
+}
+
 /**
  * Look up a Riot account by Riot ID (gameName#tagLine) → PUUID.
  * Returns null on 404, on rate limit, on network error, or on missing key.
+ * Prefiere `lookupAccountByRiotId` cuando el motivo del fallo importa.
  */
 export async function getAccountByRiotId(
   gameName: string,
   tagLine: string,
   region: RiotRegion,
 ): Promise<RiotAccount | null> {
-  const cluster = getRegionalCluster(region);
-  const encodedName = encodeURIComponent(gameName);
-  const encodedTag = encodeURIComponent(tagLine);
-  const url = `https://${cluster}.api.riotgames.com/riot/account/v1/accounts/by-riot-id/${encodedName}/${encodedTag}`;
-  const res = await riotFetch(url);
-  if (!res) return null;
-  if (res.status === 404) return null;
-  if (!res.ok) {
-    console.warn(`[riot-account] getAccountByRiotId failed: ${res.status} ${res.statusText}`);
-    return null;
-  }
-  const data = (await res.json()) as { puuid: string; gameName: string; tagLine: string };
-  return { puuid: data.puuid, gameName: data.gameName, tagLine: data.tagLine };
+  const result = await lookupAccountByRiotId(gameName, tagLine, region);
+  return result.ok ? result.value : null;
 }
 
 /**
@@ -108,22 +155,23 @@ export interface SummonerByPuuid {
   profileIconId: number;
 }
 
-export async function getSummonerByPuuid(
+/**
+ * Same as `getSummonerByPuuid` but preserving why it failed (404 sin partidas
+ * en la región, 429, red, sin clave) para que la ruta de vinculación pueda
+ * responder en español sin adivinar.
+ */
+export async function lookupSummonerByPuuid(
   puuid: string,
   region: RiotRegion,
-): Promise<SummonerByPuuid | null> {
-  const apiKey = RIOT_API_KEY_HELPER.get();
-  if (!apiKey) return null;
+): Promise<RiotLookup<SummonerByPuuid>> {
+  if (!RIOT_API_KEY_HELPER.get()) return { ok: false, failure: "no-key" };
   const url = `https://${region}.api.riotgames.com/lol/summoner/v4/summoners/by-puuid/${encodeURIComponent(puuid)}`;
   const res = await riotFetch(url);
-  if (!res || !res.ok) {
-    if (res?.status === 404) return null;
-    console.warn(`[riot-account] getSummonerByPuuid failed: ${res?.status ?? "no-response"}`);
-    return null;
-  }
+  const failure = isFailure(res);
+  if (failure) return failure;
   // Some Riot dev keys omit `id` and `accountId`. Mark them optional; downstream
   // code falls back to PUUID-based endpoints.
-  const data = (await res.json()) as {
+  const data = (await res!.json()) as {
     id?: string; accountId?: string; puuid: string;
     summonerLevel: number; profileIconId: number;
   };
@@ -131,16 +179,29 @@ export async function getSummonerByPuuid(
     console.warn(`[riot-account] getSummonerByPuuid: response missing 'id' (puuid=${data.puuid.slice(0, 8)}…) — ranked will use League-v4 by-puuid fallback`);
   }
   return {
-    id: data.id,
-    accountId: data.accountId,
-    puuid: data.puuid,
-    summonerLevel: data.summonerLevel,
-    profileIconId: data.profileIconId,
+    ok: true,
+    value: {
+      id: data.id,
+      accountId: data.accountId,
+      puuid: data.puuid,
+      summonerLevel: data.summonerLevel,
+      profileIconId: data.profileIconId,
+    },
   };
+}
+
+export async function getSummonerByPuuid(
+  puuid: string,
+  region: RiotRegion,
+): Promise<SummonerByPuuid | null> {
+  const result = await lookupSummonerByPuuid(puuid, region);
+  return result.ok ? result.value : null;
 }
 
 export const riotAccountService = {
   getAccountByRiotId,
   getAccountByPuuid,
   getSummonerByPuuid,
+  lookupAccountByRiotId,
+  lookupSummonerByPuuid,
 };

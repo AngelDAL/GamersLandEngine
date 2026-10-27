@@ -17,7 +17,7 @@
 import { prisma } from "@/lib/prisma";
 import { loadLoLProfile, type LoLProfileData } from "@/lib/riot-profile";
 import { Card } from "@/components/ui/card";
-import { Trophy, Target, Swords, Crown, Award, Coins, Clock } from "lucide-react";
+import { Trophy, Swords, Crown, Coins, Clock } from "lucide-react";
 import Link from "next/link";
 
 type Props = {
@@ -141,16 +141,15 @@ export async function LoLProfileSection({ userId, username, splashSkinName }: Pr
               </div>
             </div>
             {profile.topChampions[0] && (
-              <div className="text-right shrink-0">
-                <p className="text-[10px] text-white/70 uppercase tracking-wider">Main</p>
+              <div
+                className="text-right shrink-0"
+                title={splashSkinName || undefined}
+              >
+                <p className="text-[10px] text-white/70 uppercase tracking-wider">Principal</p>
                 <p className="text-sm font-bold text-gold">{profile.topChampions[0].name}</p>
                 {/*
-                  Skin name intentionally NOT shown here. The splash art
-                  in the page background already conveys the skin; the
-                  duplicate label next to "Main" was visual noise.
-                  Keep the splashSkinName prop in the signature in case
-                  we want to surface it elsewhere later (e.g. on hover
-                  tooltip over the background).
+                  El arte de fondo ya lo resuelve la página padre; aquí solo
+                  queda el nombre de la piel como tooltip del bloque.
                 */}
               </div>
             )}
@@ -163,7 +162,7 @@ export async function LoLProfileSection({ userId, username, splashSkinName }: Pr
               <p className="text-base font-bold">{profile.aggregate.total}</p>
             </div>
             <div className="rounded bg-background/60 backdrop-blur-sm p-2 border border-border/30">
-              <p className="text-[9px] text-muted uppercase">WR</p>
+              <p className="text-[9px] text-muted uppercase truncate">Efectividad</p>
               <p className="text-base font-bold text-gold">{profile.aggregate.winrate}%</p>
             </div>
             <div className="rounded bg-background/60 backdrop-blur-sm p-2 border border-border/30">

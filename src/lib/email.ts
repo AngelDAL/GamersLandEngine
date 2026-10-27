@@ -6,7 +6,16 @@
  */
 import { Resend } from "resend";
 
-const resend = new Resend(process.env.RESEND_API_KEY!);
+// Resend se construye de forma perezosa: instanciarlo arriba con la clave
+// ausente revienta AL IMPORTAR el módulo y deja en 500 cualquier ruta que lo
+// importe estáticamente. Sin clave, sendEmail degrada a "no enviado".
+let resendClient: Resend | null = null;
+function getResend(): Resend | null {
+  const key = process.env.RESEND_API_KEY;
+  if (!key) return null;
+  if (!resendClient) resendClient = new Resend(key);
+  return resendClient;
+}
 
 export async function sendEmail({
   to,
@@ -24,7 +33,8 @@ export async function sendEmail({
 
   const from = process.env.EMAIL_FROM || "GamersLand <noreply@gamersland.tabtap.dev>";
 
-  await resend.emails.send({
+  const client = getResend(); // la guardia de arriba ya verificó la clave
+  await client!.emails.send({
     from,
     to,
     subject,
@@ -41,7 +51,6 @@ export function buildVerificationEmail(baseUrl: string, token: string) {
     html: `
       <div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:24px;background:#0A0E1A;color:#E8E0D0;border-radius:12px;border:1px solid rgba(200,170,110,0.3)">
         <div style="text-align:center;margin-bottom:24px">
-          <div style="font-size:40px;margin-bottom:8px">🎮</div>
           <h1 style="color:#C8AA6E;margin:0;font-size:22px">GAMERSLAND</h1>
           <p style="color:#8B7E66;font-size:13px">Irapuato — Torneos de League of Legends</p>
         </div>
@@ -73,7 +82,6 @@ export function buildResetEmail(baseUrl: string, token: string) {
     html: `
       <div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:24px;background:#0A0E1A;color:#E8E0D0;border-radius:12px;border:1px solid rgba(200,170,110,0.3)">
         <div style="text-align:center;margin-bottom:24px">
-          <div style="font-size:40px;margin-bottom:8px">🔐</div>
           <h1 style="color:#C8AA6E;margin:0;font-size:22px">GAMERSLAND</h1>
           <p style="color:#8B7E66;font-size:13px">Recuperación de contraseña</p>
         </div>
@@ -97,4 +105,3 @@ export function buildResetEmail(baseUrl: string, token: string) {
   };
 }
 
-export { resend };

@@ -2,14 +2,18 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
 import { loadLoLProfile } from "@/lib/riot-profile";
+import { canManageTournament } from "@/lib/tournament-server";
 
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const session = await auth();
-  if (!session || (session.user.role !== "ADMIN" && session.user.role !== "ORGANIZER")) {
+  if (!session?.user) {
     return NextResponse.json({ error: "No autorizado" }, { status: 401 });
   }
 
   const { id: tournamentId } = await params;
+  if (!(await canManageTournament(tournamentId, session))) {
+    return NextResponse.json({ error: "Solo el organizador del torneo puede ver las solicitudes" }, { status: 403 });
+  }
 
   // Get all teams registered in this tournament
   const tournamentTeams = await prisma.tournamentTeam.findMany({

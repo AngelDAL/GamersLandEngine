@@ -3,6 +3,41 @@ import Credentials from "next-auth/providers/credentials";
 import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
 
+// Rate limiting en memoria por usuario: 10 fallos en 15 minutos bloquean el
+// intento sin consultar la BD. Es simple a propósito — un ataque de fuerza bruta
+// no debe poder ni siquiera llegar a bcrypt, que es deliberadamente lento.
+// Cada instancia del proceso tiene su propio mapa, suficiente para un solo server.
+const MAX_FAILS = 10;
+const WINDOW_MS = 15 * 60 * 1000;
+const loginAttempts = new Map<string, { fails: number; until: number }>();
+
+function isRateLimited(login: string): boolean {
+  const key = login.toLowerCase();
+  const entry = loginAttempts.get(key);
+  if (!entry) return false;
+  // Limpieza perezosa: al tocar la entrada vencida la descartamos.
+  if (entry.until <= Date.now()) {
+    loginAttempts.delete(key);
+    return false;
+  }
+  return entry.fails >= MAX_FAILS;
+}
+
+function recordFailure(login: string) {
+  const key = login.toLowerCase();
+  const entry = loginAttempts.get(key);
+  const now = Date.now();
+  if (!entry || entry.until <= now) {
+    loginAttempts.set(key, { fails: 1, until: now + WINDOW_MS });
+    return;
+  }
+  entry.fails += 1;
+}
+
+function clearFailures(login: string) {
+  loginAttempts.delete(login.toLowerCase());
+}
+
 export const { handlers, signIn, signOut, auth } = NextAuth({
   trustHost: true,
   providers: [
@@ -13,40 +48,45 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         password: { label: "Contraseña", type: "password" },
       },
       async authorize(credentials) {
-        const login = (credentials?.username as string)?.trim();
-        const password = credentials?.password as string;
+        const login =
+          typeof credentials?.username === "string"
+            ? credentials.username.trim()
+            : "";
+        const password =
+          typeof credentials?.password === "string" ? credentials.password : "";
 
         if (!login) return null;
 
-        // Find user by username or email
+        // Password siempre string y con longitud mínima antes de tocar bcrypt.
+        if (password.length < 6) return null;
+
+        if (isRateLimited(login)) return null;
+
+        // Buscar usuario por username o correo
         const user = await prisma.user.findFirst({
           where: {
             OR: [{ username: login }, { email: login }],
           },
         });
 
-        if (!user) return null;
-
-        // Existing user WITHOUT password set — allow login only if no password provided
-        // (backward compatibility: old accounts created before auth update)
-        if (!user.passwordHash) {
-          if (password) return null; // they entered a password but don't have one set
-          // No password → legacy login
-          return {
-            id: user.id,
-            name: user.username,
-            role: user.role,
-            avatarUrl: user.avatarUrl,
-            email: user.email,
-          };
+        if (!user) {
+          recordFailure(login);
+          return null;
         }
 
-        // Password is required for users who have one set
-        if (!password) return null;
+        // Sin contraseña registrada no hay camino legacy: se rechaza siempre.
+        if (!user.passwordHash) {
+          recordFailure(login);
+          return null;
+        }
 
         const valid = await bcrypt.compare(password, user.passwordHash);
-        if (!valid) return null;
+        if (!valid) {
+          recordFailure(login);
+          return null;
+        }
 
+        clearFailures(login);
         return {
           id: user.id,
           name: user.username,
@@ -59,11 +99,11 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
   ],
   callbacks: {
     async jwt({ token, user }) {
-      if (user) {
+      if (user?.id) {
         token.id = user.id;
-        token.role = (user as any).role;
-        token.avatarUrl = (user as any).avatarUrl;
-        token.email = (user as any).email;
+        token.role = user.role;
+        token.avatarUrl = user.avatarUrl;
+        token.email = user.email ?? null;
       }
       return token;
     },

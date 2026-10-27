@@ -7,6 +7,22 @@ import { Badge } from "@/components/ui/badge";
 import { LoLProfileSection } from "@/components/player/LoLProfileSection";
 import { loadLoLProfile, getRandomSplashForTopChampion } from "@/lib/riot-profile";
 
+const roleLabels: Record<string, string> = {
+  ADMIN: "Administrador",
+  ORGANIZER: "Organizador",
+  PLAYER: "Jugador",
+  SPONSOR: "Patrocinador",
+  EXPOSITOR: "Expositor",
+  EJECUTIVO: "Ejecutivo",
+};
+
+const resultLabels: Record<string, { label: string; variant: "green" | "red" | "default" }> = {
+  WON: { label: "Victoria", variant: "green" },
+  LOST: { label: "Derrota", variant: "red" },
+  DRAW: { label: "Empate", variant: "default" },
+  DNP: { label: "Sin jugar", variant: "default" },
+};
+
 export default async function PlayerPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const session = await auth();
@@ -85,10 +101,11 @@ export default async function PlayerPage({ params }: { params: Promise<{ id: str
       // champion, giving the profile a "wallpaper of the day" feel.
       // The pool is still bound by the chroma resolver so the URL always
       // points at a skin that actually exists on CommunityDragon.
-      const splash = await getRandomSplashForTopChampion(
-        top.championId,
-        Math.floor(Math.random() * 1e9),
-      );
+      // Seed distinto a propósito en cada visita (servidor): cada render de
+      // perfil muestra una skin distinta del campeón principal.
+      // eslint-disable-next-line react-hooks/purity
+      const seed = Math.floor(Math.random() * 1e9);
+      const splash = await getRandomSplashForTopChampion(top.championId, seed);
       if (splash) {
         splashUrl = splash.url;
         splashSkinName = splash.skinName;
@@ -143,14 +160,16 @@ export default async function PlayerPage({ params }: { params: Promise<{ id: str
         </div>
         <div>
           <h1 className="text-3xl font-bold text-gold">{user.username}</h1>
-          <Badge variant={user.role === "PLAYER" ? "green" : "gold"}>{user.role}</Badge>
+          <Badge variant={user.role === "PLAYER" ? "green" : "gold"}>
+            {roleLabels[user.role] || "Jugador"}
+          </Badge>
         </div>
       </div>
 
       <div className="grid gap-4 md:grid-cols-3 mb-8">
         <Card><p className="text-muted text-sm">Partidas</p><p className="text-2xl font-bold">{total}</p></Card>
         <Card><p className="text-muted text-sm">Victorias</p><p className="text-2xl font-bold text-green">{wins}</p></Card>
-        <Card><p className="text-muted text-sm">Win Rate</p><p className="text-2xl font-bold text-gold">{winRate}%</p></Card>
+        <Card><p className="text-muted text-sm">Efectividad</p><p className="text-2xl font-bold text-gold">{winRate}%</p></Card>
       </div>
 
       <div className="grid gap-6 md:grid-cols-2">
@@ -166,8 +185,8 @@ export default async function PlayerPage({ params }: { params: Promise<{ id: str
                     <p className="text-sm font-medium">{r.match.round.tournament.name}</p>
                     <p className="text-xs text-muted">Partida #{r.match.bracketPosition !== null ? r.match.bracketPosition + 1 : "?"}</p>
                   </div>
-                  <Badge variant={r.result === "WON" ? "green" : r.result === "LOST" ? "red" : "default"}>
-                    {r.result}
+                  <Badge variant={(resultLabels[r.result] || resultLabels.DRAW).variant}>
+                    {(resultLabels[r.result] || resultLabels.DRAW).label}
                   </Badge>
                 </div>
               ))}
@@ -181,12 +200,12 @@ export default async function PlayerPage({ params }: { params: Promise<{ id: str
             {user.claimedPrizes.length === 0 ? (
               <p className="text-muted text-sm">Sin premios reclamados</p>
             ) : (
-              <div className="space-y-2">
+              <div className="space-y-2 max-h-[400px] overflow-y-auto">
                 {user.claimedPrizes.map((c) => (
                   <div key={c.id} className="py-2 border-b border-border last:border-0">
                     <p className="text-sm font-medium">{c.prize.name}</p>
                     <p className="text-xs text-muted">
-                      {c.prize.tournament.name} — {c.prize.value}
+                      {c.prize.tournament.name}{c.prize.value ? ` — ${c.prize.value}` : ""}
                     </p>
                   </div>
                 ))}

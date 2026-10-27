@@ -2,7 +2,8 @@
 
 import { useState, useRef } from "react";
 import { useRouter } from "next/navigation";
-import { Camera, Loader2, Check, X } from "lucide-react";
+import { toast } from "sonner";
+import { Camera, Loader2, Check } from "lucide-react";
 
 type Props = {
   currentUrl: string | null;
@@ -28,16 +29,27 @@ export function AvatarUpload({ currentUrl, username }: Props) {
     const form = new FormData();
     form.append("avatar", file);
 
-    const res = await fetch("/api/upload/avatar", {
-      method: "POST",
-      body: form,
-    });
+    try {
+      const res = await fetch("/api/upload/avatar", {
+        method: "POST",
+        body: form,
+      });
 
-    setUploading(false);
-    if (res.ok) {
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        toast.error(data.error || "No se pudo subir la imagen. Intenta con otra foto.");
+        setPreview(null);
+        return;
+      }
       setSuccess(true);
       router.refresh();
       setTimeout(() => setSuccess(false), 2000);
+    } catch {
+      toast.error("No se pudo subir la imagen. Revisa tu conexión.");
+      setPreview(null);
+    } finally {
+      setUploading(false);
+      if (e.target) e.target.value = "";
     }
   };
 
@@ -45,8 +57,12 @@ export function AvatarUpload({ currentUrl, username }: Props) {
     <div className="relative inline-block">
       {/* Avatar */}
       <div
-        className="w-16 h-16 rounded-full overflow-hidden bg-gold/10 flex items-center justify-center cursor-pointer hover:opacity-80 transition-opacity border-2 border-border hover:border-gold/50"
+        className="relative w-16 h-16 rounded-full overflow-hidden bg-gold/10 flex items-center justify-center cursor-pointer hover:opacity-80 transition-opacity border-2 border-border hover:border-gold/50"
         onClick={() => inputRef.current?.click()}
+        role="button"
+        tabIndex={0}
+        onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") inputRef.current?.click(); }}
+        title="Cambiar foto de perfil"
       >
         {preview ? (
           <img src={preview} alt="" className="w-full h-full object-cover" />
@@ -56,8 +72,8 @@ export function AvatarUpload({ currentUrl, username }: Props) {
           <span className="text-gold text-xl font-bold">{username[0].toUpperCase()}</span>
         )}
 
-        {/* Upload overlay */}
-        <div className="absolute inset-0 bg-black/40 rounded-full flex items-center justify-center opacity-0 hover:opacity-100 transition-opacity">
+        {/* Icono permanente (visible sin hover, también en táctil) */}
+        <div className="absolute inset-0 bg-black/40 rounded-full flex items-center justify-center">
           {uploading ? (
             <Loader2 className="w-5 h-5 text-white animate-spin" />
           ) : success ? (

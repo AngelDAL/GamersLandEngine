@@ -1,7 +1,11 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { generateMatchCode } from "@/lib/riot-integration";
+import {
+  generateMatchCode,
+  RiotLiveNotConfiguredError,
+} from "@/lib/riot-integration";
+import { riotErrorResponse } from "@/app/api/riot/_shared";
 
 /**
  * GET /api/matches/[matchId]/code
@@ -82,15 +86,11 @@ export async function GET(
     try {
       code = await generateMatchCode(matchId);
     } catch (err) {
-      return NextResponse.json(
-        {
-          error:
-            err instanceof Error
-              ? `No se pudo generar el código: ${err.message}`
-              : "No se pudo generar el código",
-        },
-        { status: 500 },
-      );
+      if (err instanceof RiotLiveNotConfiguredError) {
+        return NextResponse.json({ error: err.message }, { status: 503 });
+      }
+      // 429/5xx de Riot → mensaje en español; cualquier otro fallo → genérico.
+      return riotErrorResponse(err, `generar código del partido ${matchId}`);
     }
   }
 

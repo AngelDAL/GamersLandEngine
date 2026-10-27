@@ -53,7 +53,7 @@ export function RiotMatchCode({ matchId, userIsInMatch, canEdit }: Props) {
           setError(data.error || "No se pudo cargar el código");
         }
       }
-    } catch (e) {
+    } catch {
       setError("Error de conexión");
     } finally {
       setLoading(false);

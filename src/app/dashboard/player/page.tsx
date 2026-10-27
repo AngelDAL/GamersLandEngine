@@ -9,8 +9,23 @@ import { NotificationListener } from "@/components/player/NotificationListener";
 import { LoLLinkCard } from "@/components/player/LoLLinkCard";
 import { PlayerDashboardClient } from "./PlayerDashboardClient";
 import { PlayerTabsClient } from "./PlayerTabsClient";
-import { SettingsPanel } from "@/components/player/SettingsPanel";
 import { Trophy, Swords, Users, Gamepad2, Calendar } from "lucide-react";
+
+/** Nombre visible de cada juego (nunca el código crudo con guiones bajos). */
+const GAME_LABELS: Record<string, string> = {
+  LEAGUE_OF_LEGENDS: "League of Legends",
+  LOL_1V1: "LoL 1v1",
+  VALORANT: "Valorant",
+  FORTNITE: "Fortnite",
+};
+
+function gameLabel(game: string | null | undefined): string {
+  if (!game) return "General";
+  const key = game.toUpperCase().replace(/[\s-]+/g, "_");
+  if (GAME_LABELS[key]) return GAME_LABELS[key];
+  const words = game.replace(/[_\s]+/g, " ").trim().toLowerCase();
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
 
 export default async function PlayerDashboard() {
   const session = await auth();
@@ -21,6 +36,7 @@ export default async function PlayerDashboard() {
     select: {
       id: true, username: true, avatarUrl: true,
       riotGameName: true, riotTagLine: true, riotRegion: true,
+      riotProfileRefreshedAt: true,
       email: true, emailVerified: true, passwordHash: true,
     },
   });
@@ -35,7 +51,9 @@ export default async function PlayerDashboard() {
     try {
       const parsed = JSON.parse(cachedProfile.value);
       summonerLevel = parsed?.summonerLevel ?? null;
-    } catch {}
+    } catch (err) {
+      console.warn("[player-dashboard] caché de perfil LoL ilegible:", err);
+    }
   }
 
   const [registrations, memberships, matchResults, claimedCount] = await Promise.all([
@@ -122,7 +140,7 @@ export default async function PlayerDashboard() {
           <div className="grid gap-4 md:grid-cols-4">
             <Card className="p-4"><p className="text-muted text-xs uppercase tracking-wider font-bold">Partidas</p><p className="text-2xl font-bold mt-1">{total}</p></Card>
             <Card className="p-4 border-green-500/20"><p className="text-muted text-xs uppercase tracking-wider font-bold">Victorias</p><p className="text-2xl font-bold mt-1 text-green-400">{wins}</p></Card>
-            <Card className="p-4"><p className="text-muted text-xs uppercase tracking-wider font-bold">Win Rate</p><p className="text-2xl font-bold mt-1 text-gold">{winRate}%</p></Card>
+            <Card className="p-4"><p className="text-muted text-xs uppercase tracking-wider font-bold">Efectividad</p><p className="text-2xl font-bold mt-1 text-gold">{winRate}%</p></Card>
             <Card className="p-4"><p className="text-muted text-xs uppercase tracking-wider font-bold">Premios</p><p className="text-2xl font-bold mt-1 text-blue-accent">{claimedCount}</p></Card>
           </div>
 
@@ -161,7 +179,7 @@ export default async function PlayerDashboard() {
                             </div>
                             <p className="text-xs text-muted mt-0.5 flex items-center gap-1">
                               <Gamepad2 className="w-3 h-3" />
-                              {r.match.round.tournament.game?.replace(/_/g, " ") || "General"}
+                              {gameLabel(r.match.round.tournament.game)}
                               <span className="w-1 h-1 rounded-full bg-muted" />
                               vs {oppName}
                             </p>
@@ -188,7 +206,7 @@ export default async function PlayerDashboard() {
                 initialRiotId={user?.riotGameName && user?.riotTagLine ? `${user.riotGameName}#${user.riotTagLine}` : null}
                 initialRegion={user?.riotRegion ?? null}
                 initialLevel={summonerLevel}
-                lastRefreshedAt={null}
+                lastRefreshedAt={user.riotProfileRefreshedAt?.toISOString() ?? null}
               />
 
               <Card className="p-5">
@@ -202,7 +220,7 @@ export default async function PlayerDashboard() {
                     <p>No estás en ningún equipo</p>
                   </div>
                 ) : (
-                  <div className="space-y-2">
+                  <div className="space-y-2 max-h-64 overflow-y-auto">
                     {memberships.map((m) => (
                       <Link key={m.id} href={`/teams/${m.team.id}`} className="block py-2 px-3 rounded-lg hover:bg-background transition-colors">
                         <p className="font-medium text-sm">{m.team.name}</p>
@@ -239,17 +257,6 @@ export default async function PlayerDashboard() {
               </Card>
             </div>
           </div>
-        </div>
-
-        {/* ──────────── TAB: Configuración ──────────── */}
-        <div>
-          <h2 className="text-xl font-bold text-gold mb-6 flex items-center gap-2">
-            Configuración de la cuenta
-          </h2>
-          <p className="text-muted text-sm mb-6">
-            Administra tu correo electrónico y contraseña. Los cambios se guardan al instante.
-          </p>
-          <SettingsPanel {...settingsData} />
         </div>
       </PlayerTabsClient>
 

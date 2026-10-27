@@ -5,16 +5,38 @@
  * it's needed. Once registered, the IDs are persisted on the Tournament row
  * so subsequent calls are no-ops.
  *
- * The provider is created once per server instance and cached in a module-level
- * singleton so we don't hit Riot on every code generation.
+ * El provider se cachea por torneo (nunca entre torneos) y las creaciones
+ * concurrentes del mismo torneo se deduplican, para no gastar peticiones de
+ * la ventana de 100 req / 2 min.
+ *
+ * En modo live, si el torneo no está dado de alta externamente, se lanza
+ * `RiotLiveNotConfiguredError` (mensaje "Modo live no configurado") en
+ * lugar de dejar que Riot devuelva un error crudo.
  */
 import { prisma } from "@/lib/prisma";
-import { riotService, RIOT_CALLBACK_URL, type RiotCodeConfig } from "@/lib/riot-service";
+import {
+  riotService,
+  RIOT_CALLBACK_URL,
+  RIOT_LIVE_NOT_CONFIGURED,
+  getRiotMode,
+  type RiotCodeConfig,
+} from "@/lib/riot-service";
 
 const DEFAULT_REGION = "LAN";
 
-/** Module-level cache so the provider is only registered once per process. */
-let cachedProviderId: number | null = null;
+/**
+ * El registro externo (provider/torneo en Riot con la clave de producción)
+ * lo hace el dueño; aquí no se finge que exista.
+ */
+export class RiotLiveNotConfiguredError extends Error {
+  constructor() {
+    super(RIOT_LIVE_NOT_CONFIGURED);
+    this.name = "RiotLiveNotConfiguredError";
+  }
+}
+
+/** Creaciones de provider en curso, deduplicadas por torneo. */
+const providerInFlight = new Map<string, Promise<number>>();
 
 /**
  * Ensure the tournament has a Riot provider ID.
@@ -23,26 +45,31 @@ let cachedProviderId: number | null = null;
  * Idempotent: safe to call multiple times.
  */
 export async function ensureRiotProvider(tournamentId: string): Promise<number> {
-  if (cachedProviderId !== null) return cachedProviderId;
+  const pending = providerInFlight.get(tournamentId);
+  if (pending) return pending;
 
-  const tournament = await prisma.tournament.findUnique({
-    where: { id: tournamentId },
-    select: { riotProviderId: true },
-  });
-  if (!tournament) throw new Error(`Tournament ${tournamentId} not found`);
+  const creation = (async () => {
+    const tournament = await prisma.tournament.findUnique({
+      where: { id: tournamentId },
+      select: { riotProviderId: true },
+    });
+    if (!tournament) throw new Error(`Tournament ${tournamentId} not found`);
 
-  if (tournament.riotProviderId) {
-    cachedProviderId = tournament.riotProviderId;
-    return tournament.riotProviderId;
-  }
+    if (tournament.riotProviderId) return tournament.riotProviderId;
 
-  const providerId = await riotService.createProvider(DEFAULT_REGION, RIOT_CALLBACK_URL);
-  cachedProviderId = providerId;
-  await prisma.tournament.update({
-    where: { id: tournamentId },
-    data: { riotProviderId: providerId, riotMode: process.env.RIOT_MODE ?? "stub" },
-  });
-  return providerId;
+    // Guard de modo live: sin registro externo no se genera nada.
+    if (getRiotMode() === "production") throw new RiotLiveNotConfiguredError();
+
+    const providerId = await riotService.createProvider(DEFAULT_REGION, RIOT_CALLBACK_URL);
+    await prisma.tournament.update({
+      where: { id: tournamentId },
+      data: { riotProviderId: providerId, riotMode: getRiotMode() },
+    });
+    return providerId;
+  })().finally(() => providerInFlight.delete(tournamentId));
+
+  providerInFlight.set(tournamentId, creation);
+  return creation;
 }
 
 /**

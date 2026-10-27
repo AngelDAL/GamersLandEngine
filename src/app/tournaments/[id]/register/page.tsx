@@ -17,16 +17,25 @@ export default async function RegisterPage({ params }: { params: Promise<{ id: s
 
   if (!tournament) notFound();
 
-  const users = await prisma.user.findMany({
-    select: { id: true, username: true, avatarUrl: true },
-    orderBy: { username: "asc" },
-  });
+  const [users, existingRegistrations] = await Promise.all([
+    prisma.user.findMany({
+      select: { id: true, username: true, avatarUrl: true },
+      orderBy: { username: "asc" },
+    }),
+    prisma.tournamentRegistration.findMany({
+      where: { tournamentId: id },
+      select: { userId: true, status: true },
+    }),
+  ]);
 
   return (
     <div className="max-w-2xl mx-auto px-4 py-8">
-      <h1 className="text-2xl font-bold text-gold mb-2">Registro Rápido</h1>
-      <p className="text-muted text-sm mb-6">Registra jugadores al torneo: {tournament.name}</p>
-      <RegisterClient tournamentId={tournament.id} users={users} />
+      <h1 className="text-2xl font-bold text-gold mb-6">Registro rápido</h1>
+      <RegisterClient
+        tournamentId={tournament.id}
+        users={users}
+        registeredUserIds={existingRegistrations.map((r) => r.userId)}
+      />
     </div>
   );
 }

@@ -80,16 +80,6 @@ export interface RiotLobbyEvent {
   teamId?: number;
 }
 
-/** Shape of the provider creation response. */
-interface ProviderResponse {
-  id: number;
-}
-
-/** Shape of the tournament creation response. */
-interface TournamentResponse {
-  id: number;
-}
-
 /** Shape of the lobby events response. */
 type LobbyEventsResponse = RiotLobbyEvent[];
 
@@ -103,6 +93,8 @@ const RIOT_API_BASE_URLS: Record<RiotMode, string> = {
 const DEFAULT_TIMEOUT_MS = 10_000;
 const MAX_RETRIES = 2;
 const RETRY_DELAY_MS = 500;
+/** Backoff máximo para el reintento único ante un 429. */
+const RATE_LIMIT_RETRY_MAX_MS = 10_000;
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -115,6 +107,25 @@ function delay(ms: number): Promise<void> {
 }
 
 /**
+ * Backoff para el reintento único tras un 429: usa el header `Retry-After`
+ * (segundos o fecha HTTP) si Riot lo envía, y si no un segundo fijo.
+ * Siempre limitado a `RATE_LIMIT_RETRY_MAX_MS` para no colgar la petición.
+ */
+function rateLimitBackoffMs(retryAfterHeader: string | null): number {
+  if (retryAfterHeader) {
+    const asSeconds = Number(retryAfterHeader);
+    if (Number.isFinite(asSeconds) && asSeconds >= 0) {
+      return Math.min(asSeconds * 1000, RATE_LIMIT_RETRY_MAX_MS);
+    }
+    const asDate = Date.parse(retryAfterHeader);
+    if (!Number.isNaN(asDate)) {
+      return Math.min(Math.max(0, asDate - Date.now()), RATE_LIMIT_RETRY_MAX_MS);
+    }
+  }
+  return Math.min(1000, RATE_LIMIT_RETRY_MAX_MS);
+}
+
+/**
  * Build a standard set of headers for Riot API requests.
  */
 function riotHeaders(apiKey: string): Record<string, string> {
@@ -123,6 +134,26 @@ function riotHeaders(apiKey: string): Record<string, string> {
     "Content-Type": "application/json",
     Accept: "application/json",
   };
+}
+
+/**
+ * Normaliza el ID que devuelve Riot al crear provider/torneo.
+ *
+ * El Tournament Stub V5 responde el ID como **número crudo** (`1`), no como
+ * objeto (verificado contra la API real el 2026-10-27); la documentación y
+ * otras versiones lo muestran como `{ id: 1 }`. Se aceptan las tres grafías
+ * para que un cambio de forma no vuelva a propagar `undefined` hacia
+ * `generateCodes` (error 400 "tournamentId must be long").
+ */
+function parseNumericId(raw: unknown, context: string): number {
+  if (typeof raw === "number" && Number.isFinite(raw)) return raw;
+  if (typeof raw === "string" && /^\d+$/.test(raw.trim())) return Number(raw);
+  if (raw && typeof raw === "object") {
+    const id = (raw as { id?: unknown }).id;
+    if (typeof id === "number" && Number.isFinite(id)) return id;
+    if (typeof id === "string" && /^\d+$/.test(id.trim())) return Number(id);
+  }
+  throw new Error(`Riot devolvió una respuesta inesperada en ${context}`);
 }
 
 // ─── RiotService ─────────────────────────────────────────────────────────────
@@ -192,12 +223,14 @@ export class RiotService {
         body: JSON.stringify({ region, url: callbackUrl }),
       });
 
-      const data = (await response.json()) as ProviderResponse;
-      return data.id;
+      const data: unknown = await response.json();
+      return parseNumericId(data, "createProvider");
     } catch (error) {
+      if (error instanceof RiotApiError) throw error;
+      const status = error instanceof RiotHttpError ? error.status : undefined;
       const message = this.formatError(error, "createProvider");
       console.error(`[RiotService] createProvider failed: ${message}`);
-      throw new RiotApiError("createProvider", message);
+      throw new RiotApiError("createProvider", message, status);
     }
   }
 
@@ -228,12 +261,14 @@ export class RiotService {
         body: JSON.stringify({ providerId, name }),
       });
 
-      const data = (await response.json()) as TournamentResponse;
-      return data.id;
+      const data: unknown = await response.json();
+      return parseNumericId(data, "createTournament");
     } catch (error) {
+      if (error instanceof RiotApiError) throw error;
+      const status = error instanceof RiotHttpError ? error.status : undefined;
       const message = this.formatError(error, "createTournament");
       console.error(`[RiotService] createTournament failed: ${message}`);
-      throw new RiotApiError("createTournament", message);
+      throw new RiotApiError("createTournament", message, status);
     }
   }
 
@@ -265,19 +300,26 @@ export class RiotService {
     count: number,
     config: RiotCodeConfig,
   ): Promise<string[]> {
-    const url = `${this.baseUrl}/codes?tournamentId=${tournamentId}`;
+    // `count` va en la query (esquema v5), no en el cuerpo.
+    const url = `${this.baseUrl}/codes?tournamentId=${tournamentId}&count=${count}`;
 
+    // Esquema TournamentCodeParametersV5 (verificado contra la API real el
+    // 2026-10-27): `enoughPlayers` es obligatorio, el valor legal de
+    // spectatorType es "LOBBYONLY" (sin guion bajo) y la lista blanca se
+    // llama `allowedParticipants`. Enviar el cuerpo v4 daba 400
+    // BAD_JSON_FORMAT.
     const body: Record<string, unknown> = {
-      count,
+      enoughPlayers: false,
       mapType: config.mapType,
       pickType: config.pickType,
-      spectatorType: config.spectatorType,
+      spectatorType:
+        config.spectatorType === "LOBBY_ONLY" ? "LOBBYONLY" : config.spectatorType,
       teamSize: config.teamSize,
     };
 
-    // Only include allowedPUUIDs when explicitly provided
+    // Solo se incluye la lista blanca cuando viene explícita.
     if (config.allowedPUUIDs && config.allowedPUUIDs.length > 0) {
-      body.allowedPUUIDs = config.allowedPUUIDs;
+      body.allowedParticipants = config.allowedPUUIDs;
     }
 
     try {
@@ -287,12 +329,19 @@ export class RiotService {
         body: JSON.stringify(body),
       });
 
-      const data = (await response.json()) as string[];
-      return data;
+      // El stub devuelve siempre un arreglo de códigos; se tolera también un
+      // string único por si la forma de la respuesta cambia (mismo criterio
+      // que scripts/test-riot-flow.mjs).
+      const raw: unknown = await response.json();
+      if (Array.isArray(raw)) return raw as string[];
+      if (typeof raw === "string" && raw.length > 0) return [raw];
+      throw new Error("Riot devolvió una respuesta inesperada en generateCodes");
     } catch (error) {
+      if (error instanceof RiotApiError) throw error;
+      const status = error instanceof RiotHttpError ? error.status : undefined;
       const message = this.formatError(error, "generateCodes");
       console.error(`[RiotService] generateCodes failed: ${message}`);
-      throw new RiotApiError("generateCodes", message);
+      throw new RiotApiError("generateCodes", message, status);
     }
   }
 
@@ -325,9 +374,11 @@ export class RiotService {
       const data = (await response.json()) as RiotCodeDetails;
       return data;
     } catch (error) {
+      if (error instanceof RiotApiError) throw error;
+      const status = error instanceof RiotHttpError ? error.status : undefined;
       const message = this.formatError(error, "getCodeInfo");
       console.error(`[RiotService] getCodeInfo failed: ${message}`);
-      throw new RiotApiError("getCodeInfo", message);
+      throw new RiotApiError("getCodeInfo", message, status);
     }
   }
 
@@ -360,9 +411,11 @@ export class RiotService {
       const data = (await response.json()) as LobbyEventsResponse;
       return data;
     } catch (error) {
+      if (error instanceof RiotApiError) throw error;
+      const status = error instanceof RiotHttpError ? error.status : undefined;
       const message = this.formatError(error, "getLobbyEvents");
       console.error(`[RiotService] getLobbyEvents failed: ${message}`);
-      throw new RiotApiError("getLobbyEvents", message);
+      throw new RiotApiError("getLobbyEvents", message, status);
     }
   }
 
@@ -371,11 +424,16 @@ export class RiotService {
   /**
    * Wrapped `fetch` with retry logic for transient failures.
    *
-   * Retries on 429 (rate-limit), 502, 503, and 504 (server-side)
-   * status codes up to `MAX_RETRIES` times with a small back-off delay.
+   * Política de rate limit (429): UN solo reintento con backoff (respeta el
+   * header `Retry-After` cuando Riot lo envía). Si la segunda respuesta también
+   * es 429 se lanza `RiotRateLimitError` y se sigue con datos cacheados o sin
+   * datos — nunca en bucle, porque cada reintento consume la ventana de
+   * 100 req / 2 min de la clave de desarrollo.
    *
-   * Any non-2xx response that isn't recovered by retries is thrown as an
-   * error with the HTTP status and response body for debugging.
+   * Los demás códigos reintentables (502, 503, 504) conservan `MAX_RETRIES`
+   * reintentos. Cualquier error no recuperado se lanza como `RiotHttpError`
+   * (con status) o `RiotApiError` para que los métodos públicos puedan
+   * conservar el código HTTP en el error final.
    */
   private async fetchWithRetry(
     url: string,
@@ -394,8 +452,24 @@ export class RiotService {
         return response;
       }
 
-      // Retryable status codes
-      const retryable = [429, 502, 503, 504];
+      // 429 → un único reintento con backoff; el segundo 429 corta de raíz.
+      if (response.status === 429) {
+        if (retries === MAX_RETRIES) {
+          const waitMs = rateLimitBackoffMs(response.headers.get("Retry-After"));
+          console.warn(
+            `[RiotService] HTTP 429 en ${url}; reintento único en ${waitMs} ms`,
+          );
+          await delay(waitMs);
+          return this.fetchWithRetry(url, init, retries - 1);
+        }
+        console.error(
+          `[RiotService] HTTP 429 persistente en ${url} — se descarta la llamada`,
+        );
+        throw new RiotRateLimitError("request");
+      }
+
+      // Retryable status codes (sin 429, ya tratado arriba)
+      const retryable = [502, 503, 504];
       if (retries > 0 && retryable.includes(response.status)) {
         console.warn(
           `[RiotService] HTTP ${response.status} on ${url}, retrying… (${retries} left)`,
@@ -406,7 +480,8 @@ export class RiotService {
 
       // Non-retryable error — extract body for a helpful message
       const body = await response.text().catch(() => "(unreadable body)");
-      throw new Error(
+      throw new RiotHttpError(
+        response.status,
         `Riot API responded with HTTP ${response.status}: ${body}`,
       );
     } catch (error) {
@@ -444,16 +519,46 @@ export class RiotService {
  * Structured error thrown by `RiotService` methods.
  *
  * Callers can catch this type to distinguish API errors from other
- * unexpected runtime errors.
+ * unexpected runtime errors. `status` carries the HTTP status when the
+ * failure came from a concrete Riot response (404, 429, …) so the API
+ * routes can translate it into a Spanish message without parsing text.
  */
 export class RiotApiError extends Error {
   /** The name of the service method that produced the error. */
   public readonly method: string;
+  /** HTTP status of the underlying Riot response, when known. */
+  public readonly status?: number;
 
-  constructor(method: string, message: string) {
+  constructor(method: string, message: string, status?: number) {
     super(`[${method}] ${message}`);
     this.name = "RiotApiError";
     this.method = method;
+    this.status = status;
+  }
+}
+
+/**
+ * Riot answered 429 twice in a row (or on the only allowed attempt).
+ * Callers must NOT retry: report it and continue with cached/no data.
+ */
+export class RiotRateLimitError extends RiotApiError {
+  constructor(method: string) {
+    super(method, "Límite de peticiones de Riot alcanzado (HTTP 429)", 429);
+    this.name = "RiotRateLimitError";
+  }
+}
+
+/**
+ * Internal: a non-2xx Riot response that was not recoverable by retries.
+ * Carries the HTTP status so public methods can forward it on `RiotApiError`.
+ */
+class RiotHttpError extends Error {
+  public readonly status: number;
+
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = "RiotHttpError";
+    this.status = status;
   }
 }
 
@@ -472,6 +577,26 @@ function buildDefaultCallbackUrl(): string {
 }
 
 export const RIOT_CALLBACK_URL: string = buildDefaultCallbackUrl();
+
+/**
+ * Modo efectivo del proceso, leído en cada llamada (el singleton de abajo lo
+ * congela al arrancar; esto permite consultar el modo en rutas y guards).
+ * Cualquier valor distinto de "production" se trata como "stub".
+ */
+export function getRiotMode(): RiotMode {
+  return (process.env.RIOT_MODE ?? "stub") === "production"
+    ? "production"
+    : "stub";
+}
+
+/**
+ * Mensaje honesto para cuando el modo live no está dado de alta en Riot:
+ * el provider y el torneo son registros externos que hace el dueño con la
+ * clave de producción, así que aquí no se finge nada.
+ */
+export const RIOT_LIVE_NOT_CONFIGURED =
+  "Modo live no configurado: este torneo aún no está registrado con Riot. " +
+  "Usa el modo de prueba (stub) o completa el registro con la clave de producción.";
 
 /**
  * Default singleton instance of the RiotService, initialised from environment
@@ -494,11 +619,7 @@ export const riotService: RiotService = (() => {
     );
   }
 
-  const mode = (process.env.RIOT_MODE ?? "stub") as RiotMode;
-  const validatedMode: RiotMode =
-    mode === "production" ? "production" : "stub";
-
-  return new RiotService(apiKey, validatedMode);
+  return new RiotService(apiKey, getRiotMode());
 })();
 
 // ─── Region mapping (Account-v1, Summoner-v4, League-v4, Mastery-v4) ─────────

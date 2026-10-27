@@ -15,8 +15,8 @@
  */
 import { prisma } from "./prisma";
 import { riotAccountService } from "./riot-account";
-import { riotDataService, type MasteryEntry, type MatchDetail } from "./riot-data";
-import { DDragonSkin, getChampionById, getChampionIconUrl, getLatestDDragonVersion, getProfileIconUrl } from "./riot-datadragon";
+import { riotDataService, type MasteryEntry } from "./riot-data";
+import { DDragonSkin, getChampionById, getChampionIconUrl, getProfileIconUrl } from "./riot-datadragon";
 import { cacheGet, cacheSet, cacheInvalidate, CacheTTL } from "./riot-profile-cache";
 import type { RiotRegion } from "./riot-service";
 
@@ -103,6 +103,53 @@ const EMPTY: LoLProfileData = {
   aggregate: { wins: 0, losses: 0, total: 0, winrate: 0, avgKda: 0, tournamentWins: 0, tournamentLosses: 0 },
   fromCache: false, cachedAt: null,
 };
+
+/**
+ * TTL del perfil LoL cacheado: 1 hora (mínimo exigido por el brief W4;
+ * antes era 7 días, lo que dejaba muerto al botón "Refrescar" porque
+ * servía el caché vivo. El refresh manual lo invalida antes si hace falta).
+ */
+const PROFILE_TTL_MS = 60 * 60 * 1000;
+
+// ─── Ventana defensiva de las rutas de perfil ────────────────────────────────
+
+/**
+ * Máximo 1 link/refresh por usuario cada 60 s, compartido entre
+ * `/api/profile/riot-link` y `/api/profile/riot-refresh` (mismo proceso).
+ *
+ * Protege la ventana de 100 req / 2 min de la clave de desarrollo de Riot
+ * entre todos los usuarios: sin esto, varios jugadores refrescando a la vez
+ * pueden quemar la ventana con un solo 429 mal manejado.
+ */
+const ACTION_COOLDOWN_MS = 60_000;
+const lastActionAt = new Map<string, number>();
+
+/**
+ * Reserva el turno de una acción de perfil (link/refresh) para `userId`.
+ * Devuelve `ok:false` con los segundos restantes si aún no cumple 60 s.
+ * Se toma el turno ANTES de consultar Riot: un intento fallido también
+ * consume el turno, para que nadie pueda disparar consultas ilimitadas.
+ */
+export function takeRiotProfileActionSlot(
+  userId: string,
+): { ok: true } | { ok: false; secondsLeft: number } {
+  const now = Date.now();
+  const previous = lastActionAt.get(userId);
+  if (previous !== undefined && now - previous < ACTION_COOLDOWN_MS) {
+    return {
+      ok: false,
+      secondsLeft: Math.ceil((ACTION_COOLDOWN_MS - (now - previous)) / 1000),
+    };
+  }
+  // Poda de turnos ya vencidos para que el Map no crezca sin límite.
+  if (lastActionAt.size > 1000) {
+    for (const [key, at] of lastActionAt) {
+      if (now - at >= ACTION_COOLDOWN_MS) lastActionAt.delete(key);
+    }
+  }
+  lastActionAt.set(userId, now);
+  return { ok: true };
+}
 
 // ─── Queue name translation ──────────────────────────────────────────────────
 
@@ -232,9 +279,8 @@ async function probeSplashUrl(url: string): Promise<boolean> {
      // First time we see this champ: probe all bases, build cache.
      live = new Set<number>();
      for (const s of pool) {
-       const url = buildCommunityDragonSplashUrl(championId, s.num);
-       // eslint-disable-next-line no-await-in-loop -- intentional serial probes, one champ
-       if (await probeSplashUrl(url)) live.add(s.num);
+      const url = buildCommunityDragonSplashUrl(championId, s.num);
+      if (await probeSplashUrl(url)) live.add(s.num);
      }
      liveSkinsByChamp.set(champKey, live);
    }
@@ -505,7 +551,7 @@ export async function loadLoLProfile(
     cachedAt: Date.now(),
   };
 
-  await cacheSet(cacheKey, data, CacheTTL.STICKY);
+  await cacheSet(cacheKey, data, PROFILE_TTL_MS);
   return data;
 }
 

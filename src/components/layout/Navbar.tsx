@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useSession, signOut } from "next-auth/react";
 import Link from "next/link";
-import { Gamepad2, Trophy, Plus, LogOut, QrCode, Menu, X } from "lucide-react";
+import { Gamepad2, Trophy, Plus, LogOut, QrCode, Menu, X, Users, UserSearch } from "lucide-react";
 import { QRDrawer } from "@/components/player/QRDrawer";
 import { NotificationBell } from "@/components/notifications/NotificationBell";
 
@@ -15,6 +15,8 @@ export function Navbar() {
 
   const mainLinks = [
     { href: "/tournaments", label: "Torneos", show: true },
+    { href: "/teams", label: "Equipos", show: true },
+    { href: "/free-agents", label: "Agentes libres", show: true },
     { href: "/guia", label: "Cómo participar", show: true },
     { href: "/prizes", label: "Premios", show: role === "PLAYER" },
     { href: "/tournaments/create", label: "+ Crear Torneo", show: role === "ADMIN" || role === "ORGANIZER" },
@@ -35,6 +37,12 @@ export function Navbar() {
             <div className="hidden md:flex items-center gap-4 md:gap-6 lg:gap-8 text-sm md:text-base text-[#7B8FA1]">
               <Link href="/tournaments" className="hover:text-[#C8AA6E] transition-colors whitespace-nowrap">
                 Torneos
+              </Link>
+              <Link href="/teams" className="hover:text-[#C8AA6E] transition-colors whitespace-nowrap">
+                Equipos
+              </Link>
+              <Link href="/free-agents" className="hover:text-[#C8AA6E] transition-colors whitespace-nowrap">
+                Agentes libres
               </Link>
               <Link href="/guia" className="hover:text-[#C8AA6E] transition-colors whitespace-nowrap">
                 Cómo participar
@@ -76,25 +84,28 @@ export function Navbar() {
                 {role === "PLAYER" && (
                   <button
                     onClick={() => setShowQR(true)}
-                    className="p-1.5 sm:p-2 text-muted hover:text-gold transition-colors"
-                    title="Mostrar QR"
+                    className="p-1.5 sm:p-2 text-muted hover:text-gold transition-colors min-w-10 min-h-10 flex items-center justify-center"
+                    title="Mostrar código QR"
                   >
-                    <QrCode className="w-4 h-4 sm:w-4 sm:h-4" />
+                    <QrCode className="w-4 h-4" />
                   </button>
                 )}
 
+                {/* En móvil el cierre de sesión vive en el menú (etiquetado),
+                    aquí solo se muestra en escritorio para no tocarlo sin querer */}
                 <button
                   onClick={() => signOut()}
-                  className="flex items-center gap-1 text-xs sm:text-sm text-[#E84057] hover:text-red-400 transition-colors"
+                  className="hidden sm:flex items-center gap-1 text-xs sm:text-sm text-[#E84057] hover:text-red-400 transition-colors min-h-10"
                 >
-                  <LogOut className="w-3.5 h-3.5 sm:w-3.5 sm:h-3.5" />
-                  <span className="hidden sm:inline">Salir</span>
+                  <LogOut className="w-3.5 h-3.5" />
+                  <span>Salir</span>
                 </button>
 
                 {/* Mobile menu toggle */}
                 <button
                   onClick={() => setMenuOpen(!menuOpen)}
-                  className="md:hidden p-1.5 text-muted hover:text-foreground"
+                  className="md:hidden p-1.5 min-w-10 min-h-10 flex items-center justify-center text-muted hover:text-foreground"
+                  aria-label={menuOpen ? "Cerrar menú" : "Abrir menú"}
                 >
                   {menuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
                 </button>
@@ -109,7 +120,8 @@ export function Navbar() {
                 </Link>
                 <button
                   onClick={() => setMenuOpen(!menuOpen)}
-                  className="md:hidden p-1.5 text-muted hover:text-foreground"
+                  className="md:hidden p-1.5 min-w-10 min-h-10 flex items-center justify-center text-muted hover:text-foreground"
+                  aria-label={menuOpen ? "Cerrar menú" : "Abrir menú"}
                 >
                   {menuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
                 </button>
@@ -126,19 +138,37 @@ export function Navbar() {
                 key={link.href}
                 href={link.href}
                 onClick={() => setMenuOpen(false)}
-                className="block px-3 py-2.5 text-sm text-muted hover:text-foreground hover:bg-background rounded-lg transition-colors"
+                className="flex items-center gap-2 px-3 py-3 min-h-10 text-sm text-muted hover:text-foreground hover:bg-background rounded-lg transition-colors"
               >
+                {link.href === "/teams" && <Users className="w-4 h-4" />}
+                {link.href === "/free-agents" && <UserSearch className="w-4 h-4" />}
+                {link.href === "/prizes" && <Trophy className="w-4 h-4" />}
                 {link.label}
               </Link>
             ))}
             {session && (
-              <Link
-                href={`/dashboard/${role?.toLowerCase()}`}
-                onClick={() => setMenuOpen(false)}
-                className="block px-3 py-2.5 text-sm text-gold hover:bg-background rounded-lg transition-colors"
-              >
-                Dashboard ({session.user.name})
-              </Link>
+              <div className="pt-2 mt-2 border-t border-border space-y-1">
+                <p className="px-3 py-1 text-[10px] text-muted uppercase tracking-wider font-bold">
+                  {session.user.name || "Tu cuenta"}
+                </p>
+                <Link
+                  href={`/dashboard/${role?.toLowerCase()}`}
+                  onClick={() => setMenuOpen(false)}
+                  className="block px-3 py-3 min-h-10 text-sm text-gold hover:bg-background rounded-lg transition-colors"
+                >
+                  Mi panel
+                </Link>
+                <button
+                  onClick={() => {
+                    setMenuOpen(false);
+                    signOut({ callbackUrl: "/" });
+                  }}
+                  className="flex items-center gap-2 w-full px-3 py-3 min-h-10 text-sm text-[#E84057] hover:bg-[#E84057]/10 rounded-lg transition-colors"
+                >
+                  <LogOut className="w-4 h-4" />
+                  Cerrar sesión
+                </button>
+              </div>
             )}
           </div>
         )}

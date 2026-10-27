@@ -1,18 +1,36 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useSocket } from "@/hooks/useSocket";
-import { MessageSquare, Send, ImagePlus, X, Loader2, Users, Minus, Circle, Check } from "lucide-react";
+import { MessageSquare, Send, ImagePlus, X, Loader2, Users, Minus, Circle, RotateCcw } from "lucide-react";
 
 type Props = {
   userId: string;
   teams: { id: string; name: string; memberCount: number }[];
 };
 
+type ChatMessage = {
+  id: string;
+  roomId?: string;
+  senderId: string;
+  content?: string;
+  imageUrl?: string;
+  createdAt: string;
+  sender?: { id: string; username: string; avatarUrl?: string | null };
+  _status?: "sending" | "failed";
+  _payload?: { roomId: string; content: string; imageUrl?: string };
+};
+
+// Fuera del componente: las reglas de pureza de React prohíben Date.now()
+// directamente en el cuerpo del render/handlers del componente.
+function nowMs() {
+  return Date.now();
+}
+
 export function ChatWidget({ userId, teams }: Props) {
   const [open, setOpen] = useState(false);
   const [selectedTeam, setSelectedTeam] = useState<string | null>(null);
-  const [messages, setMessages] = useState<any[]>([]);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -27,14 +45,17 @@ export function ChatWidget({ userId, teams }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const pollRef = useRef<NodeJS.Timeout | null>(null);
-  const joinedRoomsRef = useRef<Set<string>>(new Set());
+  // Último mensaje visto por equipo (marca de tiempo) para contar no leídos
+  // incluso cuando el servidor devuelve listas más largas que el contador.
+  const lastSeenRef = useRef<Record<string, number>>({});
+  const messagesRef = useRef<ChatMessage[]>([]);
+  useEffect(() => { messagesRef.current = messages; }, [messages]);
 
   const currentTeam = teams.find((t) => t.id === selectedTeam);
   const roomId = selectedTeam ? `team:${selectedTeam}` : null;
-  const { socket, connected } = useSocket(userId);
+  const { socket, connected, joinRoom } = useSocket(userId);
   const totalUnread = Object.values(unreadByTeam).reduce((a, b) => a + b, 0);
   const [resolvedRoomIds, setResolvedRoomIds] = useState<Record<string, string>>({});
-  const currentResolvedId = selectedTeam ? resolvedRoomIds[selectedTeam] : null;
 
   // Request notification permission
   useEffect(() => {
@@ -43,27 +64,31 @@ export function ChatWidget({ userId, teams }: Props) {
     }
   }, []);
 
-  // Join ALL team rooms on socket connect
+  // Join ALL team rooms on socket connect (y el hook las reúna al reconectar)
   useEffect(() => {
-    if (!socket || !connected) return;
     for (const team of teams) {
-      const rId = `team:${team.id}`;
-      if (!joinedRoomsRef.current.has(rId)) {
-        socket.emit("chat:join", rId);
-        socket.emit("presence:join", rId);
-        joinedRoomsRef.current.add(rId);
-      }
+      joinRoom(`team:${team.id}`);
     }
-  }, [socket, connected, teams]);
+  }, [teams, joinRoom]);
 
   // Global message listener
   useEffect(() => {
     if (!socket) return;
-    const handler = (msg: any) => {
+    const handler = (msg: ChatMessage) => {
       // Find which team this message belongs to using resolved room IDs
       let teamId: string | undefined;
       for (const [tid, rid] of Object.entries(resolvedRoomIds)) {
         if (rid === msg.roomId) { teamId = tid; break; }
+      }
+      // El eco propio puede llegar antes de conocer el room resuelto
+      if (!teamId && msg.senderId === userId) {
+        // coincidencia por contenido contra un optimista pendiente
+        const pending = messagesRef.current.find(
+          (m) => m.id?.startsWith("temp-") && m._status === "sending" && m.content === msg.content,
+        );
+        if (pending && pending._payload) {
+          teamId = pending._payload.roomId.replace(/^team:/, "");
+        }
       }
       if (!teamId) return; // Not a known team message
 
@@ -75,10 +100,18 @@ export function ChatWidget({ userId, teams }: Props) {
       if (isFromOther && isChatMinimized) {
         setUnreadByTeam((prev) => ({ ...prev, [teamId]: (prev[teamId] || 0) + 1 }));
       }
+      lastSeenRef.current[teamId] = nowMs();
 
       // If this team's chat is currently open, add the message
       if (open && selectedTeam === teamId) {
-        setMessages((prev) => prev.some((m) => m.id === msg.id) ? prev : [...prev, msg]);
+        setMessages((prev) => {
+          // Reemplaza el mensaje optimista propio por el confirmado del servidor
+          const withoutOptimistic = msg.senderId === userId
+            ? prev.filter((m) => !(m.id?.startsWith("temp-") && m.content === msg.content))
+            : prev;
+          if (withoutOptimistic.some((m) => m.id === msg.id)) return withoutOptimistic;
+          return [...withoutOptimistic, msg];
+        });
       }
 
       // Browser notification
@@ -86,40 +119,45 @@ export function ChatWidget({ userId, teams }: Props) {
         const senderName = msg.sender?.username || "Alguien";
         const teamName = teams.find((t) => t.id === teamId)?.name || "Equipo";
         try {
-          const n = new Notification(`💬 ${teamName}`, {
-            body: `${senderName}: ${msg.content || (msg.imageUrl ? "📷 Imagen" : "Nuevo mensaje")}`,
+          const n = new Notification(teamName, {
+            body: `${senderName}: ${msg.content || (msg.imageUrl ? "Imagen" : "Nuevo mensaje")}`,
             icon: "/favicon.ico",
-            tag: `chat-${teamId}-${Date.now()}`,
+            tag: `chat-${teamId}-${nowMs()}`,
           });
           n.onclick = () => { window.focus(); setOpen(true); setSelectedTeam(teamId); setMinimized(false); };
-        } catch {}
+        } catch { /* notificaciones browser pueden fallar sin permiso real */ }
       }
     };
     socket.on("chat:message", handler);
     return () => { socket.off("chat:message", handler); };
-  }, [socket, open, selectedTeam, minimized, userId, teams]);
+  }, [socket, open, selectedTeam, minimized, userId, teams, resolvedRoomIds]);
 
   // Load messages when team selected
   useEffect(() => {
     if (!roomId) return;
     (async () => {
+      setShowMembers(false);
+      setUnreadByTeam((prev) => ({ ...prev, [selectedTeam!]: 0 }));
       setLoading(true);
       try {
         const res = await fetch(`/api/messages?roomId=${encodeURIComponent(roomId)}`);
-        const data = await res.json();
-        setMessages(data.messages || []);
-        // Store resolved room ID for socket message matching
-        if (data.roomId && selectedTeam) {
-          setResolvedRoomIds(prev => ({ ...prev, [selectedTeam]: data.roomId }));
+        if (res.ok) {
+          const data = await res.json();
+          setMessages(data.messages || []);
+          // Store resolved room ID for socket message matching
+          if (data.roomId && selectedTeam) {
+            setResolvedRoomIds(prev => ({ ...prev, [selectedTeam]: data.roomId }));
+          }
+          const last = (data.messages || [])[data.messages?.length - 1];
+          lastSeenRef.current[selectedTeam!] = last ? new Date(last.createdAt).getTime() : nowMs();
         }
-      } catch {}
+      } catch { /* el estado de error lo maneja el vacío del chat */ }
       setLoading(false);
     })();
-    setShowMembers(false);
-    setUnreadByTeam((prev) => ({ ...prev, [selectedTeam!]: 0 }));
   }, [roomId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Poll fallback for all teams when socket not available
+  // Poll de respaldo SOLO cuando el socket está caído: refresca la última
+  // marca de tiempo (no el contador de no leídos) cada 60 s.
   useEffect(() => {
     if (connected) {
       if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
@@ -129,30 +167,41 @@ export function ChatWidget({ userId, teams }: Props) {
       for (const team of teams) {
         try {
           const res = await fetch(`/api/messages?roomId=${encodeURIComponent(`team:${team.id}`)}`);
+          if (!res.ok) continue;
           const data = await res.json();
-          const serverMsgs = data.messages || [];
-          setUnreadByTeam((prev) => {
-            const currentCount = prev[team.id] || 0;
-            const lastMsgCount = /* approximate */ serverMsgs.length;
-            // Simple heuristic: if we're not viewing this team, count unread
-            if (selectedTeam !== team.id && lastMsgCount > currentCount) {
-              return { ...prev, [team.id]: currentCount + 1 };
+          const serverMsgs: ChatMessage[] = data.messages || [];
+          const lastAt = serverMsgs.length
+            ? new Date(serverMsgs[serverMsgs.length - 1].createdAt).getTime()
+            : 0;
+          if (data.roomId) {
+            setResolvedRoomIds(prev => (prev[team.id] === data.roomId ? prev : { ...prev, [team.id]: data.roomId }));
+          }
+          if (selectedTeam === team.id) {
+            const seen = lastSeenRef.current[team.id] || 0;
+            if (lastAt > seen) {
+              setMessages(serverMsgs);
+              lastSeenRef.current[team.id] = lastAt;
             }
-            return prev;
-          });
-        } catch {}
+          } else {
+            const seen = lastSeenRef.current[team.id] || 0;
+            const unread = serverMsgs.filter(
+              (m) => new Date(m.createdAt).getTime() > seen,
+            ).length;
+            setUnreadByTeam(prev => (prev[team.id] === unread ? prev : { ...prev, [team.id]: unread }));
+          }
+        } catch { /* red caída: se reintenta en el siguiente ciclo */ }
       }
-    }, 5000);
+    }, 60000);
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
-  }, [connected, teams, selectedTeam]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [connected, teams, selectedTeam]);
 
   // Load team members
   useEffect(() => {
     if (!selectedTeam) return;
     fetch(`/api/teams/${selectedTeam}`)
-      .then((r) => r.json())
+      .then((r) => (r.ok ? r.json() : Promise.reject()))
       .then((data) => {
-        setTeamMembers(data.members?.filter((m: any) => m.status === "ACTIVE").map((m: any) => m.user) || []);
+        setTeamMembers(data.members?.filter((m: { status: string }) => m.status === "ACTIVE").map((m: { user: { id: string; username: string } }) => m.user) || []);
       })
       .catch(() => {});
   }, [selectedTeam]);
@@ -178,26 +227,93 @@ export function ChatWidget({ userId, teams }: Props) {
     return () => document.removeEventListener("mousedown", handler);
   }, [open, selectedTeam]);
 
+  const markFailed = (tempId: string) => {
+    setMessages((prev) =>
+      prev.map((m) => (m.id === tempId ? { ...m, _status: "failed" as const } : m)),
+    );
+  };
+
+  const emitMessage = (tempId: string, payload: { roomId: string; content: string; imageUrl?: string }) => {
+    if (!socket || !connected) return false;
+    socket.timeout(5000).emit("chat:message", payload, (err: Error | null) => {
+      if (err) {
+        // Sin ack del servidor: si tampoco llegó el eco broadcast en 5 s,
+        // el mensaje queda marcado como no enviado con opción de reintentar.
+        setMessages((prev) => {
+          const stillPending = prev.some(
+            (m) => m.id === tempId && m._status === "sending",
+          );
+          if (stillPending) {
+            return prev.map((m) => (m.id === tempId ? { ...m, _status: "failed" as const } : m));
+          }
+          return prev;
+        });
+      }
+    });
+    return true;
+  };
+
   const sendMessage = async () => {
     if ((!input.trim() && !previewImg) || !roomId) return;
-    const tempId = `temp-${Date.now()}`;
-    const optimisticMsg = {
-      id: tempId, senderId: userId, content: input.trim(),
+    const tempId = `temp-${nowMs()}`;
+    const payload = {
+      roomId,
+      content: input.trim(),
+      ...(previewImg ? { imageUrl: previewImg } : {}),
+    };
+    const optimisticMsg: ChatMessage = {
+      id: tempId, senderId: userId, content: payload.content,
       imageUrl: previewImg || undefined, createdAt: new Date().toISOString(),
-      sender: { id: userId, username: "Tú", avatarUrl: null }, _sending: true as const,
+      sender: { id: userId, username: "Tú", avatarUrl: null },
+      _status: "sending", _payload: payload,
     };
     setMessages((prev) => [...prev, optimisticMsg]);
-    const text = input; const img = previewImg;
     setInput(""); setPreviewImg(null);
-    const data = { roomId, content: text, ...(img ? { imageUrl: img } : {}) };
+
     if (socket && connected) {
-      socket.emit("chat:message", data);
-      setMessages((prev) => prev.filter((m) => m.id !== tempId));
+      emitMessage(tempId, payload);
     } else {
-      await fetch("/api/messages/send", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data) });
-      const res = await fetch(`/api/messages?roomId=${encodeURIComponent(roomId)}`);
-      const json = await res.json();
-      setMessages(json.messages || []);
+      try {
+        const res = await fetch("/api/messages/send", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        if (!res.ok) throw new Error("send failed");
+        const reload = await fetch(`/api/messages?roomId=${encodeURIComponent(roomId)}`);
+        if (reload.ok) {
+          const json = await reload.json();
+          setMessages(json.messages || []);
+        }
+      } catch {
+        markFailed(tempId);
+      }
+    }
+  };
+
+  const retryMessage = (m: ChatMessage) => {
+    if (!m._payload) return;
+    const tempId = `temp-retry-${nowMs()}`;
+    setMessages((prev) =>
+      prev.map((x) =>
+        x.id === m.id
+          ? { ...x, id: tempId, _status: "sending" as const, _payload: m._payload }
+          : x,
+      ),
+    );
+    if (socket && connected) {
+      emitMessage(tempId, m._payload);
+    } else {
+      fetch("/api/messages/send", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(m._payload),
+      })
+        .then((res) => {
+          if (!res.ok) throw new Error("send failed");
+          setMessages((prev) => prev.filter((x) => x.id !== tempId));
+        })
+        .catch(() => markFailed(tempId));
     }
   };
 
@@ -205,8 +321,10 @@ export function ChatWidget({ userId, teams }: Props) {
     if (!file.type.startsWith("image/")) return;
     setUploading(true);
     const form = new FormData(); form.append("image", file);
-    const res = await fetch("/api/upload/chat", { method: "POST", body: form });
-    if (res.ok) { const d = await res.json(); setPreviewImg(d.imageUrl); }
+    try {
+      const res = await fetch("/api/upload/chat", { method: "POST", body: form });
+      if (res.ok) { const d = await res.json(); setPreviewImg(d.imageUrl); }
+    } catch { /* el usuario puede reintentar el archivo */ }
     setUploading(false);
   };
 
@@ -226,6 +344,7 @@ export function ChatWidget({ userId, teams }: Props) {
       setSelectedTeam(teamId);
       setMinimized(false);
       setUnreadByTeam((prev) => ({ ...prev, [teamId]: 0 }));
+      lastSeenRef.current[teamId] = nowMs();
     }
   };
 
@@ -278,11 +397,26 @@ export function ChatWidget({ userId, teams }: Props) {
                     const isTemp = m.id?.startsWith("temp-");
                     return (
                       <div key={m.id || i} className={`flex gap-2 text-sm ${isSelf ? "flex-row-reverse" : ""}`}>
-                        <div className={`max-w-[85%] px-3 py-2 space-y-1 ${isSelf ? "bg-gold/20 text-foreground rounded-2xl rounded-tr-sm" : "bg-background text-foreground rounded-2xl rounded-tl-sm border border-border"} ${isTemp ? "opacity-60" : ""}`}>
+                        <div className={`max-w-[85%] px-3 py-2 space-y-1 ${isSelf ? "bg-gold/20 text-foreground rounded-2xl rounded-tr-sm" : "bg-background text-foreground rounded-2xl rounded-tl-sm border border-border"} ${isTemp && m._status === "sending" ? "opacity-60" : ""} ${m._status === "failed" ? "border border-red-500/50" : ""}`}>
                           {!isSelf && <p className="text-[10px] text-gold font-bold">{m.sender?.username || "?"}</p>}
                           {m.content && <p className="text-sm">{m.content}</p>}
                           {m.imageUrl && <img src={m.imageUrl} alt="" className="max-w-full rounded-lg cursor-pointer hover:opacity-90 transition-opacity" style={{ maxHeight: 180 }} onClick={() => window.open(m.imageUrl, "_blank")} />}
-                          <p className="text-[8px] text-muted text-right">{new Date(m.createdAt).toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit" })}</p>
+                          <div className="flex items-center justify-end gap-2">
+                            {m._status === "failed" ? (
+                              <button
+                                onClick={() => retryMessage(m)}
+                                className="inline-flex items-center gap-1 text-[9px] text-red-400 hover:text-red-300 font-bold"
+                              >
+                                <RotateCcw className="w-2.5 h-2.5" /> No enviado · Reintentar
+                              </button>
+                            ) : (
+                              <p className="text-[8px] text-muted text-right">
+                                {m._status === "sending"
+                                  ? "Enviando…"
+                                  : new Date(m.createdAt).toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit" })}
+                              </p>
+                            )}
+                          </div>
                         </div>
                       </div>
                     );

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
-import { getIO } from "@/socket/server";
+import { emitBracketUpdate } from "@/socket/server";
 
 export async function POST(req: Request, { params }: { params: Promise<{ matchId: string }> }) {
   const session = await auth();
@@ -34,7 +34,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ matchId
   const isTeamBased = match.round.tournament.isTeamBased;
 
   // winnerId only valid for team tournaments (FK → Team), skip for individual
-  const updateData: any = { status: newWinnerId ? "COMPLETED" : "PENDING" };
+  const updateData: { status: "COMPLETED" | "PENDING"; winnerId?: string | null } = {
+    status: newWinnerId ? "COMPLETED" : "PENDING",
+  };
   if (isTeamBased) {
     updateData.winnerId = newWinnerId;
   }
@@ -103,11 +105,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ matchId
         data: { [slot]: newWinnerId },
       });
 
-      // Emit bracket update via socket
-      try {
-        const io = getIO();
-        io.emit("bracket:updated", { tournamentId });
-      } catch {}
+      // Solo a la sala del torneo (antes: broadcast global y getIO() lanzaba
+      // desde las rutas API por la copia de módulos de Next).
+      emitBracketUpdate(tournamentId, {});
     }
   }
 

@@ -1,8 +1,34 @@
+/**
+ * POST /api/riot/provider  (ADMIN u ORGANIZER)
+ *
+ * Registra un provider ante Riot: es el primer paso externo de la
+ * integración y solo hace falta una vez por plataforma. El server rellena
+ * región y callback por defecto; el cuerpo es opcional.
+ *
+ * Body opcional: { region?: string, callbackUrl?: string }
+ * Público: no — requiere sesión con rol ADMIN u ORGANIZER.
+ */
 import { NextResponse } from "next/server";
+import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { riotService, RIOT_CALLBACK_URL } from "@/lib/riot-service";
+import { riotErrorResponse } from "../_shared";
 
 const DEFAULT_REGION = "LAN";
+
+const providerSchema = z.object({
+  region: z
+    .string()
+    .trim()
+    .min(2, "La región no es válida.")
+    .max(16, "La región no es válida.")
+    .optional(),
+  callbackUrl: z
+    .string()
+    .trim()
+    .url("La URL de retorno no es válida.")
+    .optional(),
+});
 
 export async function POST(req: Request) {
   try {
@@ -16,28 +42,25 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "No tienes permisos" }, { status: 403 });
     }
 
-    // Optional body — server fills defaults if missing
-    let region: string = DEFAULT_REGION;
-    let callbackUrl: string = RIOT_CALLBACK_URL;
-    try {
-      const body = await req.json();
-      if (body && typeof body.region === "string" && body.region.trim()) {
-        region = body.region.trim().toUpperCase();
-      }
-      if (body && typeof body.callbackUrl === "string" && body.callbackUrl.trim()) {
-        callbackUrl = body.callbackUrl.trim();
-      }
-    } catch {
-      // empty body is fine — use defaults
+    const raw = await req.json().catch(() => ({}));
+    const parsed = providerSchema.safeParse(raw ?? {});
+    if (!parsed.success) {
+      return NextResponse.json(
+        { error: parsed.error.issues[0]?.message ?? "Datos inválidos." },
+        { status: 400 },
+      );
     }
+
+    const region = (parsed.data.region ?? DEFAULT_REGION).toUpperCase();
+    const callbackUrl = parsed.data.callbackUrl ?? RIOT_CALLBACK_URL;
 
     const providerId = await riotService.createProvider(region, callbackUrl);
 
-    return NextResponse.json({ success: true, providerId, region, callbackUrl }, { status: 201 });
+    return NextResponse.json(
+      { success: true, providerId, region, callbackUrl },
+      { status: 201 },
+    );
   } catch (error) {
-    const message =
-      error instanceof Error ? error.message : "Unknown error creating provider";
-    console.error("[API] POST /api/riot/provider failed:", message);
-    return NextResponse.json({ error: message }, { status: 500 });
+    return riotErrorResponse(error, "crear provider");
   }
 }

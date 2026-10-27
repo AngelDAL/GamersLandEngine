@@ -4,7 +4,26 @@ import { redirect } from "next/navigation";
 import Link from "next/link";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Calendar, Swords, Users, Plus, ExternalLink, ArrowRight } from "lucide-react";
+import { Calendar, Swords, Users, Plus, ExternalLink } from "lucide-react";
+
+// Etiquetas en español (mismos valores que la página de torneos)
+const statusLabels: Record<string, string> = {
+  OPEN_REGISTRATION: "Abierto",
+  IN_PROGRESS: "En vivo",
+  COMPLETED: "Finalizado",
+  DRAFT: "Planeación",
+  CLOSED: "Cerrado",
+  CANCELLED: "Cancelado",
+};
+
+const statusBadge: Record<string, string> = {
+  OPEN_REGISTRATION: "bg-green-500/20 text-green-400 border-green-500/30",
+  IN_PROGRESS: "bg-blue-500/20 text-blue-400 border-blue-500/30",
+  COMPLETED: "bg-surface text-muted border-border",
+  DRAFT: "bg-yellow-500/20 text-yellow-400 border-yellow-500/30",
+  CLOSED: "bg-red-500/20 text-red-400 border-red-500/30",
+  CANCELLED: "bg-red-500/20 text-red-400 border-red-500/30",
+};
 
 export default async function OrganizerDashboard() {
   const session = await auth();
@@ -64,13 +83,13 @@ export default async function OrganizerDashboard() {
                 </div>
                 <div className="flex flex-wrap gap-2 mb-3">
                   <Badge variant="default">{t.game.replace(/_/g, " ")}</Badge>
-                  <Badge variant={t.status === "IN_PROGRESS" ? "green" : "default"}>
-                    {t.status === "OPEN_REGISTRATION" ? "Abierto" : t.status}
-                  </Badge>
+                  <span className={`inline-flex items-center px-2.5 py-0.5 rounded text-xs font-medium border ${statusBadge[t.status] || "bg-surface text-muted border-border"}`}>
+                    {statusLabels[t.status] || "Estado desconocido"}
+                  </span>
                 </div>
                 <div className="flex items-center gap-4 text-xs text-muted">
                   <span className="flex items-center gap-1">
-                    <Users className="w-3 h-3" /> {t._count.registrations} registros
+                    <Users className="w-3 h-3" /> {t._count.registrations} inscritos
                   </span>
                   <span className="flex items-center gap-1">
                     <Calendar className="w-3 h-3" />

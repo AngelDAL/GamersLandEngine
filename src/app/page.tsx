@@ -1,11 +1,13 @@
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
+import type { Prisma } from "@/generated/prisma/client";
 import Link from "next/link";
+import Image from "next/image";
 import {
   Users, MapPin, DollarSign, Trophy, Gamepad2, Calendar,
-  Sword, Crosshair, Zap, Target, Clock,
+  Sword, Crosshair, Zap, Target,
 } from "lucide-react";
-import { MatchCountdown } from "@/components/notifications/MatchCountdown";
+import { NextMatchCountdown } from "@/components/home/NextMatchCountdown";
 import { WelcomeHero } from "@/components/home/WelcomeHero";
 import { TournamentCarousel } from "@/components/landing/TournamentCarousel";
 
@@ -21,6 +23,27 @@ function getGameConfig(game: string) {
   return gameConfig[key] || { icon: Gamepad2, gradient: "from-[#0A0E1A]/80 via-[#141B2D]/40 to-transparent", label: game };
 }
 
+type NextMatchInfo = {
+  id: string;
+  scheduledAt: string | null;
+  status: string;
+};
+
+type LandingTournament = {
+  id: string;
+  name: string;
+  game: string;
+  status: string;
+  imageUrl: string | null;
+  location: string | null;
+  entryFee: unknown;
+  maxTeams: number;
+  eventDate: string | Date;
+  prizes?: { value: string | null }[];
+  _count?: { registrations: number };
+  nextMatch?: NextMatchInfo | null;
+};
+
 export default async function HomePage() {
   const session = await auth();
   const tournaments = await prisma.tournament.findMany({
@@ -34,7 +57,7 @@ export default async function HomePage() {
   });
 
   // ── Mis Torneos (same logic as /tournaments) ──
-  let myTournaments: any[] = [];
+  let myTournaments: LandingTournament[] = [];
   if (session?.user?.id) {
     const regs = await prisma.tournamentRegistration.findMany({
       where: { userId: session.user.id },
@@ -51,12 +74,13 @@ export default async function HomePage() {
     const ids = [...new Set([...regs.map(r => r.tournamentId), ...tournamentTeams.map(tt => tt.tournamentId)])];
     const myTeamIds = memberships.map(m => m.teamId);
     if (ids.length > 0) {
-      myTournaments = await prisma.tournament.findMany({
+      const found = await prisma.tournament.findMany({
         where: { id: { in: ids } },
         include: { prizes: { where: { position: 1 }, take: 1 }, _count: { select: { registrations: true } } },
       });
+      myTournaments = found as unknown as LandingTournament[];
 
-      const orConditions: any[] = [
+      const orConditions: Prisma.MatchWhereInput[] = [
         { team1Id: session.user.id },
         { team2Id: session.user.id },
       ];
@@ -74,8 +98,17 @@ export default async function HomePage() {
         orderBy: { scheduledAt: "asc" },
         take: 20,
       });
-      const matchByTid: Record<string, any> = {};
-      for (const m of matches) { const tid = m.round.tournamentId; if (!matchByTid[tid]) matchByTid[tid] = m; }
+      const matchByTid: Record<string, NextMatchInfo> = {};
+      for (const m of matches) {
+        const tid = m.round.tournamentId;
+        if (!matchByTid[tid]) {
+          matchByTid[tid] = {
+            id: m.id,
+            scheduledAt: m.scheduledAt ? new Date(m.scheduledAt).toISOString() : null,
+            status: m.status,
+          };
+        }
+      }
       myTournaments = myTournaments.map(t => ({ ...t, nextMatch: matchByTid[t.id] || null }));
     }
   }
@@ -120,7 +153,7 @@ export default async function HomePage() {
               <span className="text-xs text-muted font-normal">({myTournaments.length})</span>
             </h2>
             <div className="grid gap-3 sm:gap-4 md:grid-cols-2 lg:grid-cols-3">
-              {myTournaments.map((t: any) => {
+              {myTournaments.map((t) => {
                 const game = getGameConfig(t.game);
                 const Icon = game.icon;
                 const topPrize = t.prizes?.[0];
@@ -131,7 +164,7 @@ export default async function HomePage() {
                     <div className="bg-surface border border-border rounded-xl overflow-hidden hover:border-gold/50 hover:shadow-xl hover:shadow-gold/5 transition-all duration-200 h-full flex flex-col">
                       {/* Banner */}
                       <div className="relative h-24 overflow-hidden">
-                        <img src={t.imageUrl || "/banners/default.svg"} alt="" className="absolute inset-0 w-full h-full object-cover" />
+                        <Image src={t.imageUrl || "/banners/default.svg"} alt="" fill sizes="(max-width: 768px) 100vw, 33vw" className="object-cover" />
                         <div className="absolute inset-0 bg-gradient-to-t from-background/90 via-background/20 to-transparent" />
                         <div className="relative h-full flex items-end p-3">
                           <div className="flex items-center gap-2">
@@ -151,12 +184,12 @@ export default async function HomePage() {
                         {/* Next match with timer */}
                         <div className="bg-background border border-border rounded-lg p-3 mb-3">
                           {isCompleted ? (
-                            <p className="text-xs text-muted text-center">🏆 Torneo finalizado</p>
+                            <p className="text-xs text-muted text-center">Torneo finalizado</p>
                           ) : nm ? (
                             <div className="space-y-1.5">
                               <p className="text-[10px] text-gold font-bold uppercase tracking-wider">Próximo partido</p>
                               {nm.scheduledAt ? (
-                                <MatchCountdown scheduledAt={nm.scheduledAt} status={nm.status} large />
+                                <NextMatchCountdown scheduledAt={nm.scheduledAt} status={nm.status} large />
                               ) : (
                                 <p className="text-xs text-muted">Sin horario asignado</p>
                               )}
@@ -168,7 +201,7 @@ export default async function HomePage() {
                               )}
                             </div>
                           ) : (
-                            <p className="text-xs text-muted">Esperando bracket...</p>
+                            <p className="text-xs text-muted">Esperando la generación de llaves...</p>
                           )}
                         </div>
 
@@ -208,7 +241,7 @@ export default async function HomePage() {
                 <Link key={t.id} href={`/tournaments/${t.id}`} className="group">
                   <div className="bg-surface border border-border rounded-xl overflow-hidden hover:border-gold/50 hover:shadow-xl hover:shadow-gold/5 transition-all duration-200 h-full flex flex-col">
                     <div className="relative h-28 overflow-hidden">
-                      <img src={t.imageUrl || "/banners/default.svg"} alt="" className="absolute inset-0 w-full h-full object-cover" />
+                      <Image src={t.imageUrl || "/banners/default.svg"} alt="" fill sizes="(max-width: 768px) 100vw, 33vw" className="object-cover" />
                       <div className="absolute inset-0 bg-gradient-to-t from-background/90 via-background/20 to-transparent" />
                       <div className="absolute inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNjAiIGhlaWdodD0iNjAiIHZpZXdCb3g9IjAgMCA2MCA2MCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48ZyBmaWxsPSJub25lIiBmaWxsLXJ1bGU9ImV2ZW5vZGQiPjxnIGZpbGw9IiNmZmYiIGZpbGwtb3BhY2l0eT0iMC4wMyI+PHBhdGggZD0iTTM2IDM0djItSDI0di0yaDEyek0zNiAyNHYySDI0di0yaDEyeiIvPjwvZz48L2c+PC9zdmc+')] opacity-30" />
                       <div className="relative h-full flex items-end p-4">

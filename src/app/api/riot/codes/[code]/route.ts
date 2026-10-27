@@ -1,9 +1,20 @@
+/**
+ * GET /api/riot/codes/[code]  (ADMIN u ORGANIZER)
+ *
+ * Devuelve la configuración de un código de torneo según Riot
+ * (mapa, tipo de selección, tamaño de equipo, torneo asociado).
+ * Público: no — requiere sesión con rol ADMIN u ORGANIZER.
+ */
 import { NextResponse } from "next/server";
+import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { riotService } from "@/lib/riot-service";
+import { riotErrorResponse } from "../../_shared";
+
+const codeParamSchema = z.string().trim().min(1, "Falta el código de torneo.");
 
 export async function GET(
-  req: Request,
+  _req: Request,
   { params }: { params: Promise<{ code: string }> },
 ) {
   try {
@@ -18,23 +29,17 @@ export async function GET(
     }
 
     const { code } = await params;
-
-    if (!code || typeof code !== "string" || code.trim().length === 0) {
+    const parsed = codeParamSchema.safeParse(code);
+    if (!parsed.success) {
       return NextResponse.json(
-        { error: "code parameter is required" },
+        { error: parsed.error.issues[0]?.message ?? "Código inválido." },
         { status: 400 },
       );
     }
 
-    const codeInfo = await riotService.getCodeInfo(code);
-
+    const codeInfo = await riotService.getCodeInfo(parsed.data);
     return NextResponse.json(codeInfo);
   } catch (error) {
-    const message =
-      error instanceof Error
-        ? error.message
-        : "Unknown error retrieving code info";
-    console.error("[API] GET /api/riot/codes/[code] failed:", message);
-    return NextResponse.json({ error: message }, { status: 500 });
+    return riotErrorResponse(error, "consultar código");
   }
 }

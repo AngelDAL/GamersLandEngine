@@ -46,7 +46,11 @@ export default function RegisterPage() {
         return;
       }
 
-      setSuccess(data.message || "Cuenta creada. Revisa tu correo.");
+      if (data.emailSent === false && form.email.trim()) {
+        setSuccess("Cuenta creada. Revisa tu correo cuando esté activo; si no llega, contacta al administrador.");
+      } else {
+        setSuccess(data.message || "Cuenta creada. Ya puedes iniciar sesión.");
+      }
 
       // Redirect to login after a moment
       setTimeout(() => {
@@ -101,21 +105,21 @@ export default function RegisterPage() {
                   className="w-full px-4 py-3.5 bg-background border border-border rounded-xl text-foreground placeholder-muted focus:outline-none focus:border-gold focus:ring-1 focus:ring-gold/30 transition-all text-lg"
                   autoFocus
                 />
-                <p className="text-xs text-muted">3–24 caracteres, solo letras, números y _</p>
+                <p className="text-xs text-muted">3–20 caracteres, solo letras, números, punto, guion bajo o guion</p>
               </div>
 
               <div className="space-y-2 mb-4">
                 <label className="block text-sm text-muted font-medium">
-                  Correo electrónico <span className="text-red-400">*</span>
+                  Correo electrónico
                 </label>
                 <input
                   type="email"
-                  placeholder="tu@correo.com"
+                  placeholder="tu@correo.com (opcional)"
                   value={form.email}
                   onChange={handleChange("email")}
                   className="w-full px-4 py-3.5 bg-background border border-border rounded-xl text-foreground placeholder-muted focus:outline-none focus:border-gold focus:ring-1 focus:ring-gold/30 transition-all text-lg"
                 />
-                <p className="text-xs text-muted">Necesario para recuperar tu cuenta</p>
+                <p className="text-xs text-muted">Opcional, pero ayuda a recuperar tu cuenta</p>
               </div>
 
               <div className="space-y-2 mb-4">
@@ -169,7 +173,6 @@ export default function RegisterPage() {
                 disabled={
                   loading ||
                   !form.username.trim() ||
-                  !form.email.trim() ||
                   !form.password
                 }
                 className="w-full py-3.5 bg-gold hover:bg-gold-hover disabled:opacity-50 text-background font-bold rounded-xl transition-all flex items-center justify-center gap-2 text-lg shadow-lg shadow-gold/20"

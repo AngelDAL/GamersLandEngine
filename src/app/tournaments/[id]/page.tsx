@@ -2,6 +2,7 @@ import { prisma } from "@/lib/prisma";
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import { auth } from "@/lib/auth";
+import { canManageTournament } from "@/lib/tournament-server";
 import { TournamentDetailClient } from "./TournamentDetailClient";
 import {
   Sword, Crosshair, Zap, Target, Gamepad2, MapPin, Calendar, Trophy,
@@ -18,6 +19,15 @@ const gameConfig: Record<string, { icon: typeof Sword; gradient: string; label: 
 function getGameConfig(game: string) {
   const key = game?.toUpperCase().replace(/[\s-]+/g, "_") || "";
   return gameConfig[key] || { icon: Gamepad2, gradient: "from-[#0A0E1A]/90 via-[#141B2D]/50 to-background", label: game || "Torneo" };
+}
+
+/**
+ * Se calcula fuera del render (Date.now es impuro para el análisis de React):
+ * la página es dinámica, por lo que se evalúa en cada petición.
+ */
+function isDeadlinePassed(deadline: Date | null): boolean {
+  if (!deadline) return false;
+  return deadline.getTime() < Date.now();
 }
 
 const bracketLabels: Record<string, string> = {
@@ -68,7 +78,8 @@ export default async function TournamentPage({ params }: { params: Promise<{ id:
 
   const game = getGameConfig(tournament.game);
   const Icon = game.icon;
-  const isAdmin = session?.user?.role === "ADMIN" || session?.user?.role === "ORGANIZER";
+  // El botón de gestión solo para quien administra ESTE torneo.
+  const isAdmin = await canManageTournament(id, session);
   const userReg = session?.user?.id
     ? await prisma.tournamentRegistration.findUnique({
         where: { tournamentId_userId: { tournamentId: id, userId: session.user.id } },
@@ -97,6 +108,41 @@ export default async function TournamentPage({ params }: { params: Promise<{ id:
     include: { user: { select: { id: true, username: true } } },
   });
 
+  const isTeamBased = tournament.isTeamBased !== false;
+
+  // Mismo criterio de cupo que la API: individual → inscripciones PENDING +
+  // CONFIRMED; por equipos → equipos confirmados + equipos con solicitud
+  // pendiente (cada equipo cuenta una sola vez).
+  let entrants: number;
+  if (isTeamBased) {
+    const pendingTeamRegs = await prisma.tournamentRegistration.findMany({
+      where: { tournamentId: id, status: "PENDING", teamId: { not: null } },
+      select: { teamId: true },
+    });
+    const confirmedTeamIds = new Set(tournament.tournamentTeams.map((tt) => tt.teamId));
+    const pendingOnly = new Set(
+      pendingTeamRegs.map((r) => r.teamId!).filter((tid) => !confirmedTeamIds.has(tid)),
+    );
+    entrants = confirmedTeamIds.size + pendingOnly.size;
+  } else {
+    entrants = await prisma.tournamentRegistration.count({
+      where: { tournamentId: id, status: { in: ["PENDING", "CONFIRMED"] } },
+    });
+  }
+  const slotsFull = entrants >= tournament.maxTeams;
+  const deadlinePassed = isDeadlinePassed(tournament.registrationDeadline);
+
+  // Equipos del usuario (para el selector de inscripción por equipo)
+  const userTeams = session?.user?.id
+    ? (
+        await prisma.teamMember.findMany({
+          where: { userId: session.user.id, status: "ACTIVE" },
+          select: { team: { select: { id: true, name: true } } },
+          orderBy: { team: { name: "asc" } },
+        })
+      ).map((m) => m.team)
+    : [];
+
   const totalRounds = tournament.rounds.length;
 
   // Build name lookup map
@@ -104,12 +150,10 @@ export default async function TournamentPage({ params }: { params: Promise<{ id:
   for (const t of teams) nameMap.set(t.id, t.name);
   for (const r of registeredPlayers) nameMap.set(r.user.id, r.user.username);
 
-  const isTeamBased = tournament.isTeamBased !== false;
-
   // Determine user's team/id for highlight
   const userId = session?.user?.id;
   const userTeamId = userTeamMember?.team?.id;
-  const isUserInMatch = (match: any) =>
+  const isUserInMatch = (match: { team1Id: string | null; team2Id: string | null }) =>
     isTeamBased
       ? match.team1Id === userTeamId || match.team2Id === userTeamId
       : match.team1Id === userId || match.team2Id === userId;
@@ -189,9 +233,9 @@ export default async function TournamentPage({ params }: { params: Promise<{ id:
             </div>
             <div className="min-w-0 flex-1">
               <p className="text-[10px] text-muted uppercase tracking-wider font-bold">Participantes</p>
-              <p className="font-semibold text-sm">{tournament._count.registrations} / {tournament.maxTeams}</p>
+              <p className="font-semibold text-sm">{entrants} / {tournament.maxTeams}</p>
               <div className="w-full h-1 bg-background rounded-full mt-1 overflow-hidden">
-                <div className="h-full bg-gold rounded-full transition-all" style={{ width: `${Math.min(100, (tournament._count.registrations / tournament.maxTeams) * 100)}%` }} />
+                <div className="h-full bg-gold rounded-full transition-all" style={{ width: `${Math.min(100, (entrants / tournament.maxTeams) * 100)}%` }} />
               </div>
             </div>
           </div>
@@ -213,27 +257,32 @@ export default async function TournamentPage({ params }: { params: Promise<{ id:
           tournamentName={tournament.name}
           eventDate={tournament.eventDate.toISOString()}
           session={session ? { id: session.user.id, name: session.user.name, role: session.user.role } : null}
-          registration={userReg}
-          teams={teams}
-          freeAgents={[]}
+          registration={
+            userReg ? { ...userReg, checkedInAt: userReg.checkedInAt?.toISOString() ?? null } : null
+          }
           userTeamMember={userTeamMember}
           isTeamBased={tournament.isTeamBased !== false}
-          rounds={(tournament.rounds || []).map((r: any) => ({
+          userTeams={userTeams}
+          slotsFull={slotsFull}
+          deadlinePassed={deadlinePassed}
+          rounds={(tournament.rounds || []).map((r) => ({
             id: r.id,
             roundNumber: r.roundNumber,
-            matches: (r.matches || []).map((m: any) => ({
+            matches: (r.matches || []).map((m) => ({
               id: m.id,
               team1Id: m.team1Id,
               team2Id: m.team2Id,
               winnerId: m.winnerId,
               status: m.status,
+              score1: m.score1,
+              score2: m.score2,
               scheduledAt: m.scheduledAt ? m.scheduledAt.toISOString() : null,
               bracketPosition: m.bracketPosition,
             })),
           }))}
           allParticipants={[
-            ...teams.map((t: any) => ({ id: t.id, name: t.name })),
-            ...registeredPlayers.map((r: any) => ({ id: r.user.id, name: r.user.username })),
+            ...teams.map((t) => ({ id: t.id, name: t.name })),
+            ...registeredPlayers.map((r) => ({ id: r.user.id, name: r.user.username })),
           ]}
         />
 

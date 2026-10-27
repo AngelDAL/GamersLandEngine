@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useSocket } from "@/hooks/useSocket";
 import { useSession } from "next-auth/react";
 import { Shield, CheckCircle, XCircle, Users, X } from "lucide-react";
+import { toast } from "sonner";
 
 type InviteData = {
   id: string;
@@ -14,6 +15,34 @@ type InviteData = {
   teamName?: string;
   inviterName?: string;
 };
+
+type SocketInvite = {
+  type?: string;
+  title?: string;
+  message?: string;
+  redirectUrl?: string;
+};
+
+type TeamWithMembers = {
+  id: string;
+  name: string;
+  members?: { userId: string; status: string }[];
+};
+
+function showInvite(
+  setInvite: (d: InviteData | null) => void,
+  setVisible: (v: boolean) => void,
+  teamId: string,
+  data: SocketInvite,
+) {
+  setInvite({
+    id: teamId,
+    title: data.title || "Invitación a equipo",
+    message: data.message || "",
+    redirectUrl: data.redirectUrl || `/teams/${teamId}`,
+  });
+  setVisible(true);
+}
 
 // Track dismissed invites during this session
 const dismissedRef: Record<string, number> = {};
@@ -30,34 +59,37 @@ export function TeamInviteDrawer() {
   // Socket event listener
   useEffect(() => {
     if (!socket) return;
-    const handler = (data: any) => {
+    const handler = (data: SocketInvite) => {
       if (data.type === "team_invite" && data.redirectUrl) {
         const match = data.redirectUrl.match(/\/teams\/([^/]+)/);
         const teamId = match?.[1];
         if (!teamId) return;
         if (dismissedRef[teamId] && Date.now() - dismissedRef[teamId] < 10000) return;
-        showDrawer(teamId, data);
+        showInvite(setInvite, setVisible, teamId, data);
       }
     };
     socket.on("notification", handler);
     return () => { socket.off("notification", handler); };
   }, [socket]);
 
-  // Fallback poll: check for pending invites every 5s
+  // Respaldo del socket: revisa invitaciones pendientes cada 2 minutos
+  // (nunca más seguido; el socket es el canal principal).
   useEffect(() => {
     if (!session?.user?.id) return;
 
     const checkPending = async () => {
       try {
-        const teams = await fetch("/api/teams").then(r => r.json());
+        const res = await fetch("/api/teams");
+        if (!res.ok) return;
+        const teams: TeamWithMembers[] = await res.json();
         for (const team of teams || []) {
           if (!Array.isArray(team.members)) continue;
           const pending = team.members.find(
-            (m: any) => m.userId === session.user.id && m.status === "PENDING"
+            (m) => m.userId === session.user.id && m.status === "PENDING"
           );
           if (pending) {
             if (dismissedRef[team.id] && Date.now() - dismissedRef[team.id] < 10000) continue;
-            showDrawer(team.id, {
+            showInvite(setInvite, setVisible, team.id, {
               title: `Invitación a ${team.name}`,
               message: `Has sido invitado a unirte al equipo "${team.name}".`,
               redirectUrl: `/teams/${team.id}`,
@@ -65,26 +97,16 @@ export function TeamInviteDrawer() {
             break;
           }
         }
-      } catch {}
+      } catch { /* sin red: se reintenta en el siguiente ciclo */ }
     };
 
     const initialTimer = setTimeout(checkPending, 1000);
-    pollRef.current = setInterval(checkPending, 5000);
+    pollRef.current = setInterval(checkPending, 120000);
     return () => {
       clearTimeout(initialTimer);
       if (pollRef.current) clearInterval(pollRef.current);
     };
   }, [session?.user?.id]);
-
-  function showDrawer(teamId: string, data: any) {
-    setInvite({
-      id: teamId,
-      title: data.title || "Invitación a equipo",
-      message: data.message || "",
-      redirectUrl: data.redirectUrl || `/teams/${teamId}`,
-    });
-    setVisible(true);
-  }
 
   if (!visible || !invite) return null;
 
@@ -105,21 +127,31 @@ export function TeamInviteDrawer() {
 
     setResponding(false);
     dismiss();
-    if (res?.ok) router.push(invite.redirectUrl);
-    else router.refresh();
+    if (res?.ok) {
+      toast.success(`Ya eres parte de ${invite.title.replace("Invitación a ", "")}`);
+      router.push(invite.redirectUrl);
+    } else {
+      toast.error("No se pudo aceptar la invitación. Intenta de nuevo.");
+      router.refresh();
+    }
   };
 
   const handleReject = async () => {
     if (!invite) return;
     setResponding(true);
-    await fetch(`/api/teams/${invite.id}/respond`, {
+    const res = await fetch(`/api/teams/${invite.id}/respond`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ accept: false }),
-    }).catch(() => {});
+    }).catch(() => null);
 
     setResponding(false);
     dismiss();
+    if (res?.ok) {
+      toast.success("Invitación rechazada");
+    } else {
+      toast.error("No se pudo rechazar la invitación. Intenta de nuevo.");
+    }
     router.refresh();
   };
 

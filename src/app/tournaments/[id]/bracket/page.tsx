@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
+import { canManageTournament } from "@/lib/tournament-server";
 import { BracketInteractive } from "./BracketInteractive";
 
 export default async function BracketPage({ params }: { params: Promise<{ id: string }> }) {
@@ -39,7 +40,8 @@ export default async function BracketPage({ params }: { params: Promise<{ id: st
     );
   }
 
-  const canEdit = session?.user && (session.user.role === "ADMIN" || session.user.role === "ORGANIZER");
+  // Quien realmente gestiona ESTE torneo (creador u organizador añadido) o un ADMIN.
+  const canEdit = await canManageTournament(id, session);
 
   let userTeamIds: string[] = [];
   if (session?.user?.id) {
@@ -52,7 +54,7 @@ export default async function BracketPage({ params }: { params: Promise<{ id: st
 
   // For individual tournaments, get registered players
   let individualPlayers: { id: string; name: string }[] = [];
-  let playerNames: Record<string, string> = {};
+  const playerNames: Record<string, string> = {};
   if (!tournament.isTeamBased) {
     const registrations = await prisma.tournamentRegistration.findMany({
       where: { tournamentId: id },
@@ -95,6 +97,15 @@ export default async function BracketPage({ params }: { params: Promise<{ id: st
     eventDate: tournament.eventDate.toISOString(),
     createdAt: tournament.createdAt.toISOString(),
     registrationDeadline: tournament.registrationDeadline?.toISOString() || null,
+    rounds: tournament.rounds.map((round) => ({
+      ...round,
+      matches: round.matches.map((match) => ({
+        ...match,
+        scheduledAt: match.scheduledAt?.toISOString() ?? null,
+        startedAt: match.startedAt?.toISOString() ?? null,
+        endedAt: match.endedAt?.toISOString() ?? null,
+      })),
+    })),
   };
 
   return (

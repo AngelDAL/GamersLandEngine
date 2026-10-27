@@ -1,16 +1,17 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { Gamepad2, Loader2, Sparkles, Eye, EyeOff } from "lucide-react";
+import { useState, useEffect, Suspense } from "react";
+import { useSearchParams } from "next/navigation";
+import { Gamepad2, Loader2, Sparkles, Eye, EyeOff, AlertCircle } from "lucide-react";
 import Link from "next/link";
 
-export default function LoginPage() {
+function LoginForm() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [csrfToken, setCsrfToken] = useState("");
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
+  const searchParams = useSearchParams();
 
   useEffect(() => {
     fetch("/api/auth/csrf")
@@ -18,6 +19,16 @@ export default function LoginPage() {
       .then((d) => d.csrfToken && setCsrfToken(d.csrfToken))
       .catch(() => {});
   }, []);
+
+  // El error llega como query param tras un redirect de next-auth; se traduce
+  // a un mensaje en español en lugar del código técnico.
+  const [error, setError] = useState(() => {
+    const code = searchParams.get("error");
+    if (!code) return "";
+    return code === "CredentialsSignin"
+      ? "Usuario o contraseña incorrectos."
+      : "No se pudo iniciar sesión. Intenta de nuevo.";
+  });
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -109,8 +120,9 @@ export default function LoginPage() {
           </div>
 
           {error && (
-            <div className="mb-4 p-3 bg-red-500/10 border border-red-500/30 rounded-lg text-red-400 text-sm">
-              {error}
+            <div className="mb-4 p-3 bg-red-500/10 border border-red-500/30 rounded-lg flex items-start gap-2">
+              <AlertCircle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
+              <span className="text-red-400 text-sm">{error}</span>
             </div>
           )}
 
@@ -138,5 +150,13 @@ export default function LoginPage() {
         </form>
       </div>
     </div>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense>
+      <LoginForm />
+    </Suspense>
   );
 }

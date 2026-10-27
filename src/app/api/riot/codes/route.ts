@@ -1,7 +1,46 @@
+/**
+ * POST /api/riot/codes  (ADMIN u ORGANIZER)
+ *
+ * Genera códigos de torneo para un torneo ya registrado en Riot.
+ * Cuerpo: { tournamentId, count, config: { mapType, pickType, spectatorType,
+ * teamSize, allowedPUUIDs? } } — todo validado con zod.
+ *
+ * En modo live sin provider/torneo dados de alta responde
+ * "Modo live no configurado" en vez de un error crudo de Riot.
+ * Público: no — requiere sesión con rol ADMIN u ORGANIZER.
+ */
 import { NextResponse } from "next/server";
+import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { riotService, type RiotCodeConfig } from "@/lib/riot-service";
+import { isLiveMode, liveNotConfigured, riotErrorResponse } from "../_shared";
+
+const codesSchema = z.object({
+  tournamentId: z.string().trim().min(1, "Falta el identificador del torneo."),
+  count: z
+    .number({ message: "La cantidad debe ser un número." })
+    .int("La cantidad debe ser un número entero.")
+    .min(1, "La cantidad debe ser al menos 1.")
+    .max(1000, "La cantidad puede ser como máximo 1000."),
+  config: z.object({
+    mapType: z.enum(["SUMMONERS_RIFT", "HOWLING_ABYSS"], {
+      message: "El mapa indicado no es válido.",
+    }),
+    pickType: z.enum(["TOURNAMENT_DRAFT", "ALL_RANDOM", "BLIND_PICK"], {
+      message: "El tipo de selección indicado no es válido.",
+    }),
+    spectatorType: z.enum(["NONE", "LOBBY_ONLY", "ALL"], {
+      message: "El modo de espectadores indicado no es válido.",
+    }),
+    teamSize: z
+      .number({ message: "El tamaño del equipo debe ser un número." })
+      .int("El tamaño del equipo debe ser un número entero.")
+      .min(1, "El tamaño del equipo debe ser al menos 1.")
+      .max(5, "El tamaño del equipo puede ser como máximo 5."),
+    allowedPUUIDs: z.array(z.string().trim().min(1)).max(10).optional(),
+  }),
+});
 
 export async function POST(req: Request) {
   try {
@@ -15,53 +54,35 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "No tienes permisos" }, { status: 403 });
     }
 
-    const { tournamentId, count, config } = await req.json();
-
-    if (!tournamentId || typeof tournamentId !== "string") {
+    const raw = await req.json().catch(() => null);
+    const parsed = codesSchema.safeParse(raw);
+    if (!parsed.success) {
       return NextResponse.json(
-        { error: "tournamentId is required and must be a string" },
+        { error: parsed.error.issues[0]?.message ?? "Datos inválidos." },
         { status: 400 },
       );
     }
+    const { tournamentId, count, config } = parsed.data;
 
-    if (typeof count !== "number" || count < 1 || count > 1000) {
-      return NextResponse.json(
-        { error: "count must be a number between 1 and 1000" },
-        { status: 400 },
-      );
-    }
-
-    if (!config || typeof config !== "object") {
-      return NextResponse.json(
-        { error: "config is required and must be an object" },
-        { status: 400 },
-      );
-    }
-
-    // Look up the tournament's riot IDs
     const tournament = await prisma.tournament.findUnique({
       where: { id: tournamentId },
-      select: {
-        riotProviderId: true,
-        riotTournamentId: true,
-      },
+      select: { id: true, riotProviderId: true, riotTournamentId: true },
     });
-
     if (!tournament) {
-      return NextResponse.json({ error: "Tournament not found" }, { status: 404 });
+      return NextResponse.json({ error: "Torneo no encontrado." }, { status: 404 });
     }
 
     if (!tournament.riotProviderId || !tournament.riotTournamentId) {
+      if (isLiveMode()) return liveNotConfigured();
       return NextResponse.json(
         {
           error:
-            "Tournament has not been registered with Riot yet. Call POST /api/riot/tournament first.",
+            "Este torneo todavía no está registrado con Riot. Regístralo antes de generar códigos.",
         },
         { status: 400 },
       );
     }
 
-    // Validate the config fields
     const codeConfig: RiotCodeConfig = {
       mapType: config.mapType,
       pickType: config.pickType,
@@ -70,7 +91,6 @@ export async function POST(req: Request) {
       allowedPUUIDs: config.allowedPUUIDs,
     };
 
-    // Generate codes
     const codes = await riotService.generateCodes(
       tournament.riotTournamentId,
       count,
@@ -79,9 +99,6 @@ export async function POST(req: Request) {
 
     return NextResponse.json({ success: true, codes }, { status: 201 });
   } catch (error) {
-    const message =
-      error instanceof Error ? error.message : "Unknown error generating codes";
-    console.error("[API] POST /api/riot/codes failed:", message);
-    return NextResponse.json({ error: message }, { status: 500 });
+    return riotErrorResponse(error, "generar códigos");
   }
 }

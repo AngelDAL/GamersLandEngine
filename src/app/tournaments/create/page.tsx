@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
+import { z } from "zod";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Check, Upload, Camera, Loader2, Gamepad2 } from "lucide-react";
@@ -10,8 +11,42 @@ const BRACKET_TYPES = [
   { value: "SINGLE_ELIMINATION", label: "Eliminación Simple" },
   { value: "DOUBLE_ELIMINATION", label: "Doble Eliminación" },
   { value: "ROUND_ROBIN", label: "Round Robin" },
-  { value: "SWISS", label: "Suizo" },
 ] as const;
+
+const GAMES = [
+  { value: "LEAGUE_OF_LEGENDS", label: "League of Legends" },
+  { value: "VALORANT", label: "Valorant" },
+  { value: "FORTNITE", label: "Fortnite" },
+  { value: "LOL_1V1", label: "LoL 1v1" },
+] as const;
+
+const createSchema = z
+  .object({
+    name: z.string().trim().min(3, "Escribe un nombre de al menos 3 caracteres"),
+    game: z.enum(GAMES.map((g) => g.value) as [string, ...string[]], { message: "Selecciona un juego" }),
+    maxTeams: z.coerce.number({ message: "Escribe un cupo máximo válido" }).int("El cupo máximo debe ser un número entero").min(2, "Los cupos mínimos son 2").max(128, "Máximo 128 cupos"),
+    minTeams: z.coerce.number({ message: "Escribe un cupo mínimo válido" }).int("El cupo mínimo debe ser un número entero").min(2, "El mínimo debe ser al menos 2"),
+    entryFee: z.coerce.number({ message: "Escribe una cuota válida" }).min(0, "La cuota no puede ser negativa"),
+    eventDate: z.string().min(1, "Selecciona la fecha del evento"),
+    registrationDeadline: z.string().optional(),
+  })
+  .superRefine((data, ctx) => {
+    if (data.minTeams > data.maxTeams) {
+      ctx.addIssue({ code: "custom", path: ["minTeams"], message: "El mínimo no puede superar el cupo máximo" });
+    }
+    if (new Date(data.eventDate).getTime() <= Date.now()) {
+      ctx.addIssue({ code: "custom", path: ["eventDate"], message: "La fecha del evento debe ser futura" });
+    }
+    if (data.registrationDeadline && new Date(data.registrationDeadline).getTime() <= Date.now()) {
+      ctx.addIssue({ code: "custom", path: ["registrationDeadline"], message: "La fecha límite debe ser futura" });
+    }
+  });
+
+type FieldErrors = Partial<Record<string, string>>;
+
+function gameLabel(value: string) {
+  return GAMES.find((g) => g.value === value)?.label || value;
+}
 
 export default function CreateTournamentPage() {
   const router = useRouter();
@@ -39,6 +74,7 @@ export default function CreateTournamentPage() {
     location: "",
     rules: "",
   });
+  const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
 
   useEffect(() => {
     fetch("/api/upload/banner")
@@ -81,20 +117,35 @@ export default function CreateTournamentPage() {
     e.preventDefault();
     setLoading(true);
     setError("");
+    setFieldErrors({});
 
-    if (!form.name || !form.eventDate) {
-      setError("Nombre y fecha del evento son requeridos");
+    const parsed = createSchema.safeParse({
+      name: form.name,
+      game: form.game,
+      maxTeams: form.maxTeams,
+      minTeams: form.minTeams,
+      entryFee: form.entryFee === "" ? 0 : form.entryFee,
+      eventDate: form.eventDate,
+      registrationDeadline: form.registrationDeadline || undefined,
+    });
+    if (!parsed.success) {
+      const errors: FieldErrors = {};
+      for (const issue of parsed.error.issues) {
+        const key = String(issue.path[0] ?? "form");
+        if (!errors[key]) errors[key] = issue.message;
+      }
+      setFieldErrors(errors);
       setLoading(false);
       return;
     }
 
-    const payload: any = {
-      name: form.name,
-      game: form.game || "General",
+    const payload = {
+      name: parsed.data.name,
+      game: parsed.data.game,
       description: form.description || undefined,
-      entryFee: form.entryFee ? parseFloat(form.entryFee) : undefined,
-      maxTeams: parseInt(form.maxTeams),
-      minTeams: parseInt(form.minTeams),
+      entryFee: parsed.data.entryFee,
+      maxTeams: parsed.data.maxTeams,
+      minTeams: parsed.data.minTeams,
       teamSize: parseInt(form.teamSize),
       isTeamBased: form.isTeamBased,
       bracketType: form.bracketType,
@@ -112,7 +163,7 @@ export default function CreateTournamentPage() {
     });
 
     if (!res.ok) {
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       setError(data.error || "Error al crear torneo");
       setLoading(false);
       return;
@@ -126,8 +177,7 @@ export default function CreateTournamentPage() {
 
   return (
     <div className="max-w-3xl mx-auto px-4 py-8">
-      <h1 className="text-3xl font-bold text-gold mb-2">Crear Torneo</h1>
-      <p className="text-muted text-sm mb-8">Define los detalles del nuevo torneo</p>
+      <h1 className="text-3xl font-bold text-gold mb-6">Crear Torneo</h1>
 
       <form onSubmit={handleSubmit}>
         <Card className="space-y-5 p-6">
@@ -144,7 +194,7 @@ export default function CreateTournamentPage() {
                   <Gamepad2 className="w-8 h-8 text-gold drop-shadow-lg" />
                   <div>
                     <p className="text-white font-bold text-xl drop-shadow-lg">{form.name || "Nombre del torneo"}</p>
-                    <p className="text-white/70 text-sm drop-shadow">{form.game || "Juego"}</p>
+                    <p className="text-white/70 text-sm drop-shadow">{form.game ? gameLabel(form.game) : "Juego"}</p>
                   </div>
                 </div>
               </div>
@@ -189,13 +239,24 @@ export default function CreateTournamentPage() {
             <div className="md:col-span-2">
               <label className="block text-sm text-muted mb-1">Nombre del torneo *</label>
               <input value={form.name} onChange={(e) => update("name", e.target.value)}
-                className="w-full px-4 py-3 bg-background border border-border rounded text-foreground focus:outline-none focus:border-gold" placeholder="Ej: Copa GamersLand" />
+                className={`w-full px-4 py-3 bg-background border rounded text-foreground focus:outline-none ${fieldErrors.name ? "border-red" : "border-border focus:border-gold"}`} placeholder="Ej: Copa GamersLand" />
+              {fieldErrors.name && <p className="text-red text-xs mt-1">{fieldErrors.name}</p>}
             </div>
 
             <div className="md:col-span-2">
-              <label className="block text-sm text-muted mb-1">Juego</label>
-              <input value={form.game} onChange={(e) => update("game", e.target.value)}
-                className="w-full px-4 py-3 bg-background border border-border rounded text-foreground focus:outline-none focus:border-gold" placeholder="Ej: League of Legends, Valorant, Fortnite, Super Smash Bros..." />
+              <label className="block text-sm text-muted mb-1">Juego *</label>
+              <div className="flex flex-wrap gap-2">
+                {GAMES.map((g) => (
+                  <button key={g.value} type="button" onClick={() => update("game", g.value)}
+                    aria-pressed={form.game === g.value}
+                    className={`flex-1 min-w-[140px] px-3 py-3 rounded-lg text-sm font-bold transition-all min-h-[44px] ${
+                      form.game === g.value ? "bg-gold text-background" : "bg-background border border-border text-muted hover:border-gold/30"
+                    }`}>
+                    {g.label}
+                  </button>
+                ))}
+              </div>
+              {fieldErrors.game && <p className="text-red text-xs mt-1">{fieldErrors.game}</p>}
             </div>
 
             <div>
@@ -214,10 +275,17 @@ export default function CreateTournamentPage() {
 
             <div>
               <label className="block text-sm text-muted mb-1">Tipo de bracket</label>
-              <select value={form.bracketType} onChange={(e) => update("bracketType", e.target.value)}
-                className="w-full px-4 py-3 bg-background border border-border rounded text-foreground focus:outline-none focus:border-gold">
-                {BRACKET_TYPES.map((b) => (<option key={b.value} value={b.value}>{b.label}</option>))}
-              </select>
+              <div className="flex flex-col gap-2">
+                {BRACKET_TYPES.map((b) => (
+                  <button key={b.value} type="button" onClick={() => update("bracketType", b.value)}
+                    aria-pressed={form.bracketType === b.value}
+                    className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all min-h-[44px] ${
+                      form.bracketType === b.value ? "bg-gold text-background" : "bg-background border border-border text-muted hover:border-gold/30"
+                    }`}>
+                    {b.label}
+                  </button>
+                ))}
+              </div>
             </div>
 
             {form.isTeamBased && (
@@ -231,19 +299,22 @@ export default function CreateTournamentPage() {
             <div>
               <label className="block text-sm text-muted mb-1">{form.isTeamBased ? "Cupo máximo de equipos" : "Cupo máximo de jugadores"}</label>
               <input type="number" value={form.maxTeams} onChange={(e) => update("maxTeams", e.target.value)}
-                className="w-full px-4 py-3 bg-background border border-border rounded text-foreground focus:outline-none focus:border-gold" min={2} max={128} />
+                className={`w-full px-4 py-3 bg-background border rounded text-foreground focus:outline-none ${fieldErrors.maxTeams ? "border-red" : "border-border focus:border-gold"}`} min={2} max={128} />
+              {fieldErrors.maxTeams && <p className="text-red text-xs mt-1">{fieldErrors.maxTeams}</p>}
             </div>
 
             <div>
               <label className="block text-sm text-muted mb-1">{form.isTeamBased ? "Cupo mínimo de equipos" : "Cupo mínimo de jugadores"}</label>
               <input type="number" value={form.minTeams} onChange={(e) => update("minTeams", e.target.value)}
                 className="w-full px-4 py-3 bg-background border border-border rounded text-foreground focus:outline-none focus:border-gold" min={2} />
+              {fieldErrors.minTeams && <p className="text-red text-xs mt-1">{fieldErrors.minTeams}</p>}
             </div>
 
             <div>
               <label className="block text-sm text-muted mb-1">Cuota de entrada ($)</label>
               <input type="number" value={form.entryFee} onChange={(e) => update("entryFee", e.target.value)}
                 className="w-full px-4 py-3 bg-background border border-border rounded text-foreground focus:outline-none focus:border-gold" placeholder="0 = gratuito" />
+              {fieldErrors.entryFee && <p className="text-red text-xs mt-1">{fieldErrors.entryFee}</p>}
             </div>
 
             <div>
@@ -256,12 +327,14 @@ export default function CreateTournamentPage() {
               <label className="block text-sm text-muted mb-1">Fecha del evento *</label>
               <input type="datetime-local" value={form.eventDate} onChange={(e) => update("eventDate", e.target.value)}
                 className="w-full px-4 py-3 bg-background border border-border rounded text-foreground focus:outline-none focus:border-gold" />
+              {fieldErrors.eventDate && <p className="text-red text-xs mt-1">{fieldErrors.eventDate}</p>}
             </div>
 
             <div>
               <label className="block text-sm text-muted mb-1">Fecha límite de registro</label>
               <input type="datetime-local" value={form.registrationDeadline} onChange={(e) => update("registrationDeadline", e.target.value)}
                 className="w-full px-4 py-3 bg-background border border-border rounded text-foreground focus:outline-none focus:border-gold" />
+              {fieldErrors.registrationDeadline && <p className="text-red text-xs mt-1">{fieldErrors.registrationDeadline}</p>}
             </div>
 
             <div className="md:col-span-2">

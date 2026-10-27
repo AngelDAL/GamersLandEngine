@@ -1,50 +1,45 @@
 import { NextRequest, NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
+import { z } from "zod";
 import { prisma } from "@/lib/prisma";
-import { sendEmail, buildVerificationEmail } from "@/lib/email";
+
+// El correo es opcional: si no llega a verificar, la cuenta queda activa igual
+// y el administrador puede verificarla desde el panel.
+const registerSchema = z.object({
+  username: z
+    .string()
+    .trim()
+    .min(3, "El usuario debe tener al menos 3 caracteres")
+    .max(20, "El usuario puede tener máximo 20 caracteres")
+    .regex(
+      /^[a-zA-Z0-9_.-]+$/,
+      "El usuario solo puede contener letras, números, punto, guion bajo o guion"
+    ),
+  email: z
+    .string()
+    .trim()
+    .email("Correo electrónico inválido")
+    .optional()
+    .or(z.literal("").transform(() => undefined)),
+  password: z
+    .string()
+    .min(6, "La contraseña debe tener al menos 6 caracteres"),
+});
 
 export async function POST(req: NextRequest) {
   try {
-    const { username, email, password } = await req.json();
-
-    // Validation
-    if (!username || !email || !password) {
+    const body = await req.json();
+    const parsed = registerSchema.safeParse(body);
+    if (!parsed.success) {
       return NextResponse.json(
-        { error: "Usuario, correo y contraseña son requeridos" },
+        { error: parsed.error.issues[0]?.message ?? "Datos inválidos" },
         { status: 400 }
       );
     }
 
-    if (username.length < 3 || username.length > 24) {
-      return NextResponse.json(
-        { error: "El usuario debe tener entre 3 y 24 caracteres" },
-        { status: 400 }
-      );
-    }
+    const { username, email, password } = parsed.data;
 
-    if (!/^[a-zA-Z0-9_]+$/.test(username)) {
-      return NextResponse.json(
-        { error: "El usuario solo puede contener letras, números y guión bajo" },
-        { status: 400 }
-      );
-    }
-
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-      return NextResponse.json(
-        { error: "Correo electrónico inválido" },
-        { status: 400 }
-      );
-    }
-
-    if (password.length < 6) {
-      return NextResponse.json(
-        { error: "La contraseña debe tener al menos 6 caracteres" },
-        { status: 400 }
-      );
-    }
-
-    // Check existing username
     const existingUser = await prisma.user.findUnique({
       where: { username },
     });
@@ -55,43 +50,58 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Check existing email
-    const existingEmail = await prisma.user.findUnique({
-      where: { email },
-    });
-    if (existingEmail) {
-      return NextResponse.json(
-        { error: "Ese correo ya está registrado" },
-        { status: 409 }
-      );
+    if (email) {
+      const existingEmail = await prisma.user.findUnique({
+        where: { email },
+      });
+      if (existingEmail) {
+        return NextResponse.json(
+          { error: "Ese correo ya está registrado" },
+          { status: 409 }
+        );
+      }
     }
 
-    // Hash password
     const passwordHash = await bcrypt.hash(password, 12);
+    const verificationToken = email ? crypto.randomBytes(32).toString("hex") : null;
 
-    // Generate verification token
-    const verificationToken = crypto.randomBytes(32).toString("hex");
-
-    // Create user
-    const user = await prisma.user.create({
+    await prisma.user.create({
       data: {
         username,
-        email,
+        email: email ?? null,
         passwordHash,
         verificationToken,
       },
     });
 
-    // Send verification email (non-blocking — don't fail the response)
-    const baseUrl = process.env.AUTH_URL || "https://gamersland.tabtap.dev";
-    const { subject, html } = buildVerificationEmail(baseUrl, verificationToken);
-    sendEmail({ to: email, subject, html }).catch((err) =>
-      console.error("[EMAIL] Failed to send verification:", err)
-    );
+    // El correo se intenta enviar sin bloquear la respuesta: si no hay clave de
+    // Resend configurada, el registro PROCEDE igual (emailSent: false).
+    // El import es dinámico y perezoso a propósito: `src/lib/email.ts` instancia
+    // `new Resend(...)` al cargarse y eso lanza sin RESEND_API_KEY, lo que
+    // reventaba esta ruta con 500 en vez de degradar.
+    let emailSent = false;
+    if (email && verificationToken && process.env.RESEND_API_KEY) {
+      try {
+        const { sendEmail, buildVerificationEmail } = await import("@/lib/email");
+        const baseUrl = process.env.AUTH_URL || "https://gamersland.tabtap.dev";
+        const { subject, html } = buildVerificationEmail(baseUrl, verificationToken);
+        const result = await sendEmail({ to: email, subject, html });
+        emailSent = result.sent;
+      } catch (err) {
+        console.error("[REGISTER] No se pudo enviar la verificación:", err);
+        emailSent = false;
+      }
+    }
 
     return NextResponse.json({
       success: true,
-      message: "Cuenta creada. Revisa tu correo para verificar tu cuenta.",
+      ok: true,
+      emailSent,
+      message: emailSent
+        ? "Cuenta creada. Revisa tu correo para verificar tu cuenta."
+        : email
+          ? "Cuenta creada. Revisa tu correo cuando esté activo; si no llega, contacta al administrador."
+          : "Cuenta creada. Ya puedes iniciar sesión.",
     });
   } catch (error) {
     console.error("[REGISTER] Error:", error);

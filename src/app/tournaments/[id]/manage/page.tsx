@@ -3,6 +3,8 @@ import { auth } from "@/lib/auth";
 import { redirect, notFound } from "next/navigation";
 import Link from "next/link";
 import { ManageTournamentClient } from "./ManageTournamentClient";
+import { statusLabels } from "../../page";
+import { canManageTournament } from "@/lib/tournament-server";
 
 export const dynamic = "force-dynamic";
 
@@ -13,6 +15,11 @@ export default async function ManageTournamentPage({ params }: { params: Promise
   }
 
   const { id } = await params;
+  // Solo el creador, un organizador añadido o un ADMIN gestionan ESTE torneo.
+  if (!(await canManageTournament(id, session))) {
+    redirect(`/tournaments/${id}`);
+  }
+
   const tournament = await prisma.tournament.findUnique({
     where: { id },
     include: {
@@ -55,11 +62,13 @@ export default async function ManageTournamentPage({ params }: { params: Promise
   // Get registered users for this tournament
   const registrations = await prisma.tournamentRegistration.findMany({
     where: { tournamentId: id },
-    include: { user: { select: { id: true, username: true, role: true, avatarUrl: true } } },
+    include: {
+      user: { select: { id: true, username: true, role: true, avatarUrl: true } },
+      team: { select: { id: true, name: true } },
+    },
     orderBy: { createdAt: "desc" },
   });
   const players = registrations.map((r) => r.user);
-  const registeredUserIds = new Set(players.map((p) => p.id));
 
   const [orgUsers, teams] = await Promise.all([
     prisma.user.findMany({
@@ -91,7 +100,7 @@ export default async function ManageTournamentPage({ params }: { params: Promise
   ]);
 
   // Free agents: registered players NOT in any team
-  const membersInTeam = new Set(teams.flatMap((t: any) => t.members.map((m: any) => m.userId)));
+  const membersInTeam = new Set(teams.flatMap((t) => t.members.map((m) => m.userId)));
   const freeAgents = players.filter((p) => !membersInTeam.has(p.id));
 
   // Serialize tournament to plain object (fix Decimal error)
@@ -101,6 +110,15 @@ export default async function ManageTournamentPage({ params }: { params: Promise
     eventDate: tournament.eventDate.toISOString(),
     registrationDeadline: tournament.registrationDeadline?.toISOString() || null,
     createdAt: tournament.createdAt.toISOString(),
+    rounds: tournament.rounds.map((round) => ({
+      ...round,
+      matches: round.matches.map((match) => ({
+        ...match,
+        scheduledAt: match.scheduledAt?.toISOString() ?? null,
+        startedAt: match.startedAt?.toISOString() ?? null,
+        endedAt: match.endedAt?.toISOString() ?? null,
+      })),
+    })),
     tournamentTeams: tournament.tournamentTeams.map((tt) => ({
       id: tt.id,
       teamId: tt.teamId,
@@ -110,8 +128,8 @@ export default async function ManageTournamentPage({ params }: { params: Promise
         name: tt.team.name,
         captainId: tt.team.captainId,
         captain: tt.team.captain,
-        _count: { members: tt.team.members.filter((m: any) => m.status === "ACTIVE").length },
-        members: tt.team.members.map((m: any) => ({
+        _count: { members: tt.team.members.filter((m) => m.status === "ACTIVE").length },
+        members: tt.team.members.map((m) => ({
           userId: m.userId,
           status: m.status,
           user: m.user,
@@ -136,7 +154,7 @@ export default async function ManageTournamentPage({ params }: { params: Promise
         <div>
           <h1 className="text-3xl font-bold text-gold">{tournament.name}</h1>
           <p className="text-sm text-muted mt-1">
-            {gameLabel} — {tournament.status}
+            {gameLabel} — {statusLabels[tournament.status] ?? tournament.status}
           </p>
         </div>
         <Link href={`/tournaments/${id}`} className="text-sm text-muted hover:text-foreground">
@@ -146,6 +164,7 @@ export default async function ManageTournamentPage({ params }: { params: Promise
 
       <ManageTournamentClient
         tournament={serialized}
+        userId={session.user.id}
         players={players}
         registrations={registrations.map(r => ({
           id: r.id,
@@ -155,6 +174,7 @@ export default async function ManageTournamentPage({ params }: { params: Promise
           status: r.status,
           createdAt: r.createdAt.toISOString(),
           user: { id: r.user.id, username: r.user.username, avatarUrl: r.user.avatarUrl },
+          team: r.team ? { id: r.team.id, name: r.team.name } : null,
         }))}
         allPlayers={allPlayers}
         organizers={orgUsers}

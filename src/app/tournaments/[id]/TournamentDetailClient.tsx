@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import {
   UserPlus, CheckCircle, LogIn, Swords, Users,
-  ArrowRight, Calendar, Trophy, Loader2,
+  ArrowRight, Trophy, Loader2, X, Clock,
 } from "lucide-react";
 import Link from "next/link";
 
@@ -26,29 +26,40 @@ type Match = {
 };
 type Round = { id: string; roundNumber: number; matches: Match[] };
 
+type RegistrationInfo = {
+  id: string;
+  status: string;
+  paid: boolean;
+  checkedInAt: string | null;
+} | null;
+
 type Props = {
   tournamentId: string;
   tournamentStatus: string;
   tournamentName: string;
   eventDate: string;
   session: { id: string; name: string; role: string } | null;
-  registration: any;
-  teams: any[];
-  freeAgents: any[];
-  userTeamMember: any;
+  registration: RegistrationInfo;
+  userTeamMember: { team: { id: string; name: string } } | null;
   isTeamBased: boolean;
+  userTeams: { id: string; name: string }[];
+  slotsFull: boolean;
+  deadlinePassed: boolean;
   rounds: Round[];
   allParticipants: Participant[];
 };
 
 export function TournamentDetailClient({
   tournamentId, tournamentStatus, tournamentName, eventDate, session, registration,
-  teams, freeAgents, userTeamMember, isTeamBased, rounds, allParticipants,
+  userTeamMember, isTeamBased, userTeams, slotsFull, deadlinePassed,
+  rounds, allParticipants,
 }: Props) {
   const router = useRouter();
   const [showRegisterModal, setShowRegisterModal] = useState(false);
   const [registrationLoading, setRegistrationLoading] = useState(false);
   const [checkinLoading, setCheckinLoading] = useState(false);
+  const [selectedTeamId, setSelectedTeamId] = useState<string | null>(userTeams[0]?.id ?? null);
+  const [feedback, setFeedback] = useState<{ type: "ok" | "error"; msg: string } | null>(null);
 
   const isEventDay = useMemo(() => {
     const today = new Date();
@@ -62,22 +73,28 @@ export function TournamentDetailClient({
 
   const isOpen = tournamentStatus === "OPEN_REGISTRATION";
   const isLive = tournamentStatus === "IN_PROGRESS" || tournamentStatus === "COMPLETED";
-  const isPlayer = session?.role === "PLAYER";
   const isRegistered = !!registration;
   const hasRounds = rounds.length > 0;
+  const regStatus: string | null = registration?.status ?? null;
+  const blockedReason = !isOpen
+    ? null
+    : slotsFull
+      ? "Cupo completo"
+      : deadlinePassed
+        ? "Fecha límite vencida"
+        : null;
 
   const resolveName = (id: string) => allParticipants.find((p) => p.id === id)?.name || id.slice(0, 8);
 
-  // Find the user's next match (latest round first)
-  const nextMatch = useMemo(() => {
-    if (!session?.id) return null;
+  // Busca el próximo partido del usuario (sin memo: los arreglos de props se
+  // reconstruyen en cada petición y React Compiler no puede preservarlo).
+  let nextMatch: (Match & { roundNumber: number; p1: Participant | null; p2: Participant | null }) | null = null;
+  if (session?.id) {
     const userId = session.id;
-    let userTeamId: string | null = null;
-    if (isTeamBased && userTeamMember) {
-      userTeamId = userTeamMember.team.id;
-    }
-    // Iterate rounds in REVERSE — highest round where user appears = current match
-    for (let ri = rounds.length - 1; ri >= 0; ri--) {
+    const userTeamId = isTeamBased && userTeamMember ? userTeamMember.team.id : null;
+    // Se recorren las rondas al revés: la ronda más alta donde aparece el
+    // usuario es su partido actual.
+    for (let ri = rounds.length - 1; ri >= 0 && !nextMatch; ri--) {
       const round = rounds[ri];
       for (const match of round.matches) {
         if (match.status === "COMPLETED") continue;
@@ -85,24 +102,36 @@ export function TournamentDetailClient({
           ? match.team1Id === userTeamId || match.team2Id === userTeamId
           : match.team1Id === userId || match.team2Id === userId;
         if (isParticipant) {
-          const p1 = allParticipants.find((p) => p.id === match.team1Id) || null;
-          const p2 = allParticipants.find((p) => p.id === match.team2Id) || null;
-          return { ...match, roundNumber: round.roundNumber, p1, p2 };
+          nextMatch = {
+            ...match,
+            roundNumber: round.roundNumber,
+            p1: allParticipants.find((p) => p.id === match.team1Id) || null,
+            p2: allParticipants.find((p) => p.id === match.team2Id) || null,
+          };
+          break;
         }
       }
     }
-    return null;
-  }, [rounds, session?.id, isTeamBased, userTeamMember, allParticipants]);
+  }
 
   const handleAutoRegister = async () => {
     setRegistrationLoading(true);
+    setFeedback(null);
     try {
-      await fetch(`/api/tournaments/${tournamentId}/registrations`, {
+      const res = await fetch(`/api/tournaments/${tournamentId}/registrations`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({}),
+        body: JSON.stringify(isTeamBased ? { teamId: selectedTeamId } : {}),
       });
-      router.refresh();
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setFeedback({ type: "error", msg: data.error || "No se pudo enviar la solicitud" });
+      } else {
+        setFeedback({ type: "ok", msg: "Solicitud enviada — pendiente de aprobación" });
+        router.refresh();
+      }
+    } catch {
+      setFeedback({ type: "error", msg: "Error de conexión al enviar la solicitud" });
     } finally {
       setRegistrationLoading(false);
     }
@@ -110,13 +139,22 @@ export function TournamentDetailClient({
 
   const handleCheckin = async () => {
     setCheckinLoading(true);
+    setFeedback(null);
     try {
-      await fetch(`/api/tournaments/${tournamentId}/check-in`, {
+      const res = await fetch(`/api/tournaments/${tournamentId}/check-in`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({}),
       });
-      router.refresh();
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setFeedback({ type: "error", msg: data.error || "No se pudo registrar la asistencia" });
+      } else {
+        setFeedback({ type: "ok", msg: "Asistencia registrada" });
+        router.refresh();
+      }
+    } catch {
+      setFeedback({ type: "error", msg: "Error de conexión al registrar la asistencia" });
     } finally {
       setCheckinLoading(false);
     }
@@ -261,62 +299,137 @@ export function TournamentDetailClient({
                   {session ? <Swords className="w-5 h-5 text-gold" /> : <LogIn className="w-5 h-5 text-gold" />}
                 </div>
                 <div>
-                  {session ? (
-                    <>
-                      <p className="font-bold text-foreground">¿Quieres participar?</p>
-                      <p className="text-xs text-muted mt-0.5">Regístrate directamente en este torneo</p>
-                    </>
-                  ) : (
-                    <>
-                      <p className="font-bold text-foreground">¿Quieres jugar?</p>
-                      <p className="text-xs text-muted mt-0.5">Crea una cuenta y participa</p>
-                    </>
-                  )}
+                  <p className="font-bold text-foreground">
+                    {session ? "Inscripciones abiertas" : "¿Quieres jugar?"}
+                  </p>
+                  <p className="text-xs text-muted mt-0.5">{tournamentName}</p>
                 </div>
               </div>
-              {session ? (
-                <Button onClick={handleAutoRegister} disabled={registrationLoading} size="lg" className="shrink-0 w-full sm:w-auto">
-                  {registrationLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : <UserPlus className="w-5 h-5" />}
-                  {registrationLoading ? "REGISTRANDO..." : "REGISTRARME AHORA"}
-                </Button>
-              ) : (
-                <Button onClick={() => setShowRegisterModal(true)} size="lg" className="shrink-0 w-full sm:w-auto">
-                  <UserPlus className="w-5 h-5" />
-                  CREAR CUENTA
-                </Button>
-              )}
+
+              <div className="flex flex-col items-stretch sm:items-end gap-2 shrink-0 w-full sm:w-auto">
+                {/* Selector de equipo (torneos por equipo) */}
+                {session && isTeamBased && userTeams.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5 justify-start sm:justify-end">
+                    {userTeams.map((t) => (
+                      <button
+                        key={t.id}
+                        type="button"
+                        onClick={() => setSelectedTeamId(t.id)}
+                        aria-pressed={selectedTeamId === t.id}
+                        className={`px-3 py-2 min-h-[40px] rounded-lg text-xs font-bold border transition-all ${
+                          selectedTeamId === t.id
+                            ? "bg-gold text-background border-gold"
+                            : "bg-background text-muted border-border hover:border-gold/30"
+                        }`}
+                      >
+                        {t.name}
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                {session && isTeamBased && userTeams.length === 0 ? (
+                  <div className="flex gap-2">
+                    <Link href="/teams/create" className="px-4 py-2.5 min-h-[40px] inline-flex items-center bg-gold text-background font-bold rounded-xl text-sm hover:bg-gold-hover transition-colors">
+                      Crear equipo
+                    </Link>
+                    <Link href="/free-agents?tab=teams" className="px-4 py-2.5 min-h-[40px] inline-flex items-center border border-gold/50 text-gold font-bold rounded-xl text-sm hover:bg-gold/10 transition-colors">
+                      Buscar equipo
+                    </Link>
+                  </div>
+                ) : session ? (
+                  blockedReason ? (
+                    <Button disabled size="lg" className="w-full sm:w-auto" title={blockedReason}>
+                      {blockedReason}
+                    </Button>
+                  ) : (
+                    <Button onClick={handleAutoRegister} disabled={registrationLoading} size="lg" className="w-full sm:w-auto min-h-[44px]">
+                      {registrationLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : <UserPlus className="w-5 h-5" />}
+                      {registrationLoading ? "ENVIANDO..." : "INSCRIBIRME"}
+                    </Button>
+                  )
+                ) : (
+                  <Button onClick={() => setShowRegisterModal(true)} size="lg" className="w-full sm:w-auto min-h-[44px]">
+                    <UserPlus className="w-5 h-5" />
+                    ENTRAR PARA INSCRIBIRME
+                  </Button>
+                )}
+              </div>
             </div>
+
+            {feedback && (
+              <div
+                className={`mt-4 px-4 py-3 rounded-xl text-sm font-medium border flex items-center gap-2 ${
+                  feedback.type === "ok"
+                    ? "bg-green-500/10 border-green-500/30 text-green-400"
+                    : "bg-red-500/10 border-red-500/30 text-red-400"
+                }`}
+              >
+                {feedback.type === "ok" ? <CheckCircle className="w-4 h-4 shrink-0" /> : <X className="w-4 h-4 shrink-0" />}
+                {feedback.msg}
+              </div>
+            )}
           </Card>
         )}
 
         {/* Registered: show status */}
         {isRegistered && (
           <>
+            {regStatus === "PENDING" && (
+              <Card className="p-5 border-gold/30 text-center">
+                <div className="w-12 h-12 rounded-full bg-gold/10 flex items-center justify-center mx-auto mb-3">
+                  <Clock className="w-6 h-6 text-gold" />
+                </div>
+                <Button
+                  disabled
+                  size="lg"
+                  className="w-full sm:w-auto mb-1"
+                  title="El organizador revisará tu solicitud"
+                >
+                  Solicitud en revisión
+                </Button>
+                <p className="text-xs text-muted mt-1">{tournamentName}</p>
+              </Card>
+            )}
+
+            {regStatus === "REJECTED" && (
+              <Card className="p-5 border-red-500/30 text-center">
+                <div className="w-12 h-12 rounded-full bg-red-500/10 flex items-center justify-center mx-auto mb-3">
+                  <X className="w-6 h-6 text-red-400" />
+                </div>
+                <p className="font-bold text-red-400 text-sm">Tu solicitud de inscripción fue rechazada</p>
+                <p className="text-xs text-muted mt-1">{tournamentName}</p>
+              </Card>
+            )}
+
+            {regStatus === "CONFIRMED" && (
+              <>
             {/* Check-in & payment status */}
             <div className="flex flex-wrap items-center gap-2">
               {/* Check-in */}
               {registration?.checkedInAt ? (
-                <span className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-green-500/10 border border-green-500/30 text-green-400">
-                  ✅ Check-in a las {formatCheckinTime(registration.checkedInAt)}
+                <span className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold bg-green-500/10 border border-green-500/30 text-green-400">
+                  <CheckCircle className="w-3.5 h-3.5" /> Check-in a las {formatCheckinTime(registration.checkedInAt)}
                 </span>
               ) : isEventDay ? (
                 <button
                   onClick={handleCheckin}
                   disabled={checkinLoading}
-                  className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-gold/10 border border-gold/30 text-gold hover:bg-gold/20 transition-colors disabled:opacity-50"
+                  className="inline-flex items-center gap-1.5 px-3 py-2 min-h-[40px] rounded-lg text-xs font-bold bg-gold/10 border border-gold/30 text-gold hover:bg-gold/20 transition-colors disabled:opacity-50"
                 >
-                  {checkinLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "✅ Hacer check-in"}
+                  {checkinLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle className="w-3.5 h-3.5" />}
+                  Hacer check-in
                 </button>
               ) : (
-                <span className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-muted/10 border border-border text-muted">
-                  🎫 Check-in disponible el día del evento
+                <span className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold bg-muted/10 border border-border text-muted">
+                  <Clock className="w-3.5 h-3.5" /> Check-in el día del evento
                 </span>
               )}
 
               {/* Payment badge (only show if paid) */}
               {registration?.paid && (
-                <span className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-green-500/10 border border-green-500/30 text-green-400">
-                  ✅ Cuota pagada
+                <span className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold bg-green-500/10 border border-green-500/30 text-green-400">
+                  <CheckCircle className="w-3.5 h-3.5" /> Cuota pagada
                 </span>
               )}
             </div>
@@ -324,7 +437,7 @@ export function TournamentDetailClient({
             {/* Payment info (when not paid) */}
             {!registration?.paid && (
               <p className="text-xs text-muted mt-2">
-                💰 La cuota de entrada se paga en el local o a través de la pasarela de pago (próximamente)
+                La cuota de entrada se liquida con el organizador del torneo
               </p>
             )}
 
@@ -367,17 +480,17 @@ export function TournamentDetailClient({
             ) : isTeamBased && !userTeamMember ? (
               <Card className="p-5 text-center">
                 <Users className="w-10 h-10 text-muted mx-auto mb-3 opacity-30" />
-                <p className="font-bold text-gold text-sm">Estás registrado</p>
+                <p className="font-bold text-gold text-sm">Inscripción confirmada</p>
                 <p className="text-xs text-muted mt-1 mb-4">Aún no formas parte de un equipo</p>
                 <div className="flex gap-2 justify-center">
-                  <a href="/teams/create" className="px-4 py-2 bg-gold text-background font-bold rounded-xl text-sm">Crear equipo</a>
+                  <Link href="/teams/create" className="px-4 py-2 min-h-[40px] inline-flex items-center bg-gold text-background font-bold rounded-xl text-sm">Crear equipo</Link>
                   <Link href="/free-agents?tab=teams" className="px-4 py-2 border border-gold/50 text-gold font-bold rounded-xl text-sm hover:bg-gold/10 transition-colors">Buscar equipo</Link>
                 </div>
               </Card>
             ) : hasRounds ? (
               <Card className="p-5 text-center">
                 <CheckCircle className="w-10 h-10 text-green-400 mx-auto mb-3" />
-                <p className="font-bold text-green-400 text-sm">Estás registrado</p>
+                <p className="font-bold text-green-400 text-sm">Inscrito</p>
                 <p className="text-xs text-muted mt-1 mb-4">El torneo ya comenzó</p>
                 <Link href={`/tournaments/${tournamentId}/bracket`}
                   className="inline-flex items-center gap-1.5 px-4 py-2 bg-gold text-background font-bold rounded-xl text-sm">
@@ -387,9 +500,11 @@ export function TournamentDetailClient({
             ) : (
               <Card className="p-5 text-center">
                 <CheckCircle className="w-10 h-10 text-green-400 mx-auto mb-3" />
-                <p className="font-bold text-green-400 text-sm">Estás registrado en este torneo</p>
-                <p className="text-xs text-muted mt-1">Espera a que se asignen los enfrentamientos</p>
+                <p className="font-bold text-green-400 text-sm">Inscrito en este torneo</p>
+                <p className="text-xs text-muted mt-1">Inscripción confirmada por el organizador</p>
               </Card>
+            )}
+              </>
             )}
           </>
         )}

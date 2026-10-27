@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { requireAuth, canAccessChatRoom } from "@/lib/permissions";
 
 async function resolveChatRoom(roomId: string): Promise<string> {
   if (roomId.startsWith("team:")) {
@@ -20,23 +21,42 @@ async function resolveChatRoom(roomId: string): Promise<string> {
 }
 
 export async function GET(req: Request) {
-  const { searchParams } = new URL(req.url);
-  const roomId = searchParams.get("roomId");
+  try {
+    const session = await requireAuth();
 
-  if (!roomId) {
-    return NextResponse.json({ messages: [] });
+    const { searchParams } = new URL(req.url);
+    const roomId = searchParams.get("roomId");
+
+    if (!roomId) {
+      return NextResponse.json({ messages: [] });
+    }
+
+    // La sala solo se materializa DESPUÉS de comprobar que el usuario pertenece
+    // al equipo/partido: antes cualquier autenticado leía salas ajenas y de
+    // paso creaba salas fantasma.
+    const allowed = await canAccessChatRoom(roomId, session.user.id, session.user.role);
+    if (!allowed) {
+      return NextResponse.json(
+        { error: "No perteneces a esta sala de chat" },
+        { status: 403 }
+      );
+    }
+
+    const resolvedId = await resolveChatRoom(roomId);
+
+    const messages = await prisma.chatMessage.findMany({
+      where: { roomId: resolvedId },
+      include: {
+        sender: { select: { id: true, username: true, avatarUrl: true } },
+      },
+      orderBy: { createdAt: "asc" },
+      take: 100,
+    });
+
+    return NextResponse.json({ messages, roomId: resolvedId });
+  } catch (err) {
+    if (err instanceof NextResponse) return err;
+    console.error("[MESSAGES GET] Error:", err);
+    return NextResponse.json({ error: "Error al obtener los mensajes" }, { status: 500 });
   }
-
-  const resolvedId = await resolveChatRoom(roomId);
-
-  const messages = await prisma.chatMessage.findMany({
-    where: { roomId: resolvedId },
-    include: {
-      sender: { select: { id: true, username: true, avatarUrl: true } },
-    },
-    orderBy: { createdAt: "asc" },
-    take: 100,
-  });
-
-  return NextResponse.json({ messages, roomId: resolvedId });
 }

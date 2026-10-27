@@ -1,19 +1,38 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
+import { canManageTournament, emitBracketUpdated } from "@/lib/tournament-server";
 
 export async function DELETE(req: Request, { params }: { params: Promise<{ id: string; roundId: string }> }) {
   const session = await auth();
-  if (!session?.user || (session.user.role !== "ADMIN" && session.user.role !== "ORGANIZER")) {
+  if (!session?.user) {
     return NextResponse.json({ error: "No autorizado" }, { status: 401 });
   }
 
-  const { roundId } = await params;
+  const { id: tournamentId, roundId } = await params;
+  if (!(await canManageTournament(tournamentId, session))) {
+    return NextResponse.json({ error: "Solo el organizador del torneo puede borrar rondas" }, { status: 403 });
+  }
 
-  // Delete all matches in the round first
-  await prisma.match.deleteMany({ where: { roundId } });
-  // Then delete the round
-  await prisma.tournamentRound.delete({ where: { id: roundId } });
+  const round = await prisma.tournamentRound.findFirst({
+    where: { id: roundId, tournamentId },
+    select: { id: true },
+  });
+  if (!round) {
+    return NextResponse.json({ error: "Ronda no encontrada" }, { status: 404 });
+  }
+
+  await prisma.$transaction(async (tx) => {
+    const matches = await tx.match.findMany({ where: { roundId }, select: { id: true } });
+    const matchIds = matches.map((m) => m.id);
+    if (matchIds.length > 0) {
+      await tx.chatRoom.deleteMany({ where: { matchId: { in: matchIds } } });
+    }
+    await tx.match.deleteMany({ where: { roundId } });
+    await tx.tournamentRound.delete({ where: { id: roundId } });
+  });
+
+  emitBracketUpdated(tournamentId);
 
   return NextResponse.json({ success: true });
 }

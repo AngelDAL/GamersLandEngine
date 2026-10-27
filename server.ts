@@ -1,3 +1,8 @@
+// Debe ir ANTES que cualquier otro import: define globalThis.AsyncLocalStorage.
+// Sin esto, la cadena de imports de next-auth/jwt (vía src/socket/server) evalúa
+// módulos de app-render de Next antes de que exista el ALS y truena el arranque
+// con "Invariant: AsyncLocalStorage accessed in runtime where it is not available".
+import "next/dist/server/node-environment";
 import "dotenv/config";
 import { createServer } from "http";
 import { parse } from "url";

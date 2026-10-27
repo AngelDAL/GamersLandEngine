@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Gamepad2, Loader2, CheckCircle, AlertCircle, ArrowLeft, Mail } from "lucide-react";
+import { Loader2, AlertCircle, ArrowLeft, Mail } from "lucide-react";
 import Link from "next/link";
 
 export default function ForgotPasswordPage() {
@@ -26,6 +26,11 @@ export default function ForgotPasswordPage() {
       const data = await res.json();
       if (!res.ok) {
         setError(data.error || "Error al enviar el correo");
+        return;
+      }
+
+      if (data.emailSent === false) {
+        setError("Recuperación por correo no disponible. Contacta al administrador.");
         return;
       }
 

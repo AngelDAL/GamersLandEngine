@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useRef, useEffect, useCallback } from "react";
+import { useState, useMemo, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -8,15 +8,46 @@ import { BracketSlot } from "@/components/tournament/BracketSlot";
 import { ParticipantPool } from "@/components/tournament/ParticipantPool";
 import { MatchChat } from "@/components/chat/MatchChat";
 import { MatchCountdown } from "@/components/notifications/MatchCountdown";
+import { useSocket } from "@/hooks/useSocket";
 import { RiotMatchCode } from "./RiotMatchCode";
+import { StandingsTable } from "./StandingsTable";
 import {
   Swords, ArrowLeft, Check, Loader2,
   Trophy, Medal, XCircle, Clock, Calendar,
 } from "lucide-react";
 import Link from "next/link";
 
+export type BracketMatch = {
+  id: string;
+  bracketPosition?: number | null;
+  team1Id: string | null;
+  team2Id: string | null;
+  status: string;
+  winnerId?: string | null;
+  score1?: number | null;
+  score2?: number | null;
+  scheduledAt?: string | null;
+  phase?: string | null;
+};
+
+export type BracketRound = {
+  id: string;
+  roundNumber: number;
+  matches: BracketMatch[];
+};
+
+type TournamentData = {
+  id: string;
+  name?: string;
+  imageUrl?: string | null;
+  game?: string | null;
+  isTeamBased?: boolean;
+  bracketType?: string;
+  rounds?: BracketRound[];
+};
+
 type Props = {
-  tournament: any;
+  tournament: TournamentData;
   canEdit: boolean;
   userId?: string;
   userTeamIds: string[];
@@ -40,10 +71,19 @@ function formatLocalDatetime(): string {
   return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}`;
 }
 
+// Confeti determinista: nada de Math.random() durante el render (purity).
+const CONFETTI = Array.from({ length: 50 }, (_, i) => ({
+  left: (i * 37) % 100,
+  duration: 2 + ((i * 13) % 30) / 10,
+  delay: ((i * 7) % 5) / 10,
+  size: 6 + ((i * 11) % 8),
+  round: (i * 19) % 2 === 0,
+}));
+
 export function BracketInteractive({
   tournament, canEdit, userId, userTeamIds,
   tournamentName, tournamentId, registeredTeams,
-  isIndividual, playerNames, individualPlayers, maxSlots,
+  isIndividual, playerNames, individualPlayers,
 }: Props) {
   const router = useRouter();
   const [loading, setLoading] = useState<string | null>(null);
@@ -52,10 +92,33 @@ export function BracketInteractive({
   const [editScores, setEditScores] = useState<{ s1: string; s2: string }>({ s1: "", s2: "" });
   const [isEditingSchedule, setIsEditingSchedule] = useState<string | null>(null);
   const [editScheduleDate, setEditScheduleDate] = useState("");
+  const [liveTick, setLiveTick] = useState(0);
+  const [scrollProgress, setScrollProgress] = useState(0);
 
-  // Confetti: only render on client (Math.random() causes SSR mismatch)
-  const [showConfetti, setShowConfetti] = useState(false);
-  useEffect(() => { setShowConfetti(true); }, []);
+  // Tiempo real: la sala `tournament:<id>` la abre el servidor de sockets y,
+  // mientras tanto, el evento llega por la sala personal del usuario.
+  const { socket, joinRoom } = useSocket(userId);
+  useEffect(() => {
+    joinRoom(`tournament:${tournamentId}`);
+  }, [joinRoom, tournamentId]);
+  useEffect(() => {
+    if (!socket) return;
+    const refresh = () => {
+      router.refresh();
+      setLiveTick((t) => t + 1);
+    };
+    socket.on("bracket:updated", refresh);
+    return () => {
+      socket.off("bracket:updated", refresh);
+    };
+  }, [socket, router]);
+
+  // Respaldo del socket: si el evento no llega (p. ej. servidor de sockets
+  // sin la sala del torneo), se refresca la llave cada 90 s como mínimo.
+  useEffect(() => {
+    const t = setInterval(() => router.refresh(), 90_000);
+    return () => clearInterval(t);
+  }, [router]);
 
   // Auto-clear status message after 5s
   useEffect(() => {
@@ -69,7 +132,7 @@ export function BracketInteractive({
     matchId: string; roundId: string; t1: string; t2: string; s1: number; s2: number; winner: string;
   } | null>(null);
 
-  const rounds = tournament.rounds || [];
+  const rounds = useMemo(() => tournament.rounds ?? [], [tournament.rounds]);
   const hasRounds = rounds.length > 0;
 
   const allParticipants = useMemo(() => {
@@ -89,19 +152,19 @@ export function BracketInteractive({
   }, [rounds]);
 
   const slotLabels = useMemo(() => {
-    const labels: { matchId: string; label: string }[] = [];
+    const labels: { matchId: string; slot: "team1" | "team2"; label: string }[] = [];
     for (const round of rounds) {
       for (const match of round.matches) {
         const rNum = round.roundNumber;
         const pos = match.bracketPosition ?? 0;
-        labels.push({ matchId: match.id, label: `R${rNum}-M${pos + 1} (A)` });
-        labels.push({ matchId: match.id, label: `R${rNum}-M${pos + 1} (B)` });
+        labels.push({ matchId: match.id, slot: "team1", label: `Ronda ${rNum} - Partido ${pos + 1} · A` });
+        labels.push({ matchId: match.id, slot: "team2", label: `Ronda ${rNum} - Partido ${pos + 1} · B` });
       }
     }
     return labels;
   }, [rounds]);
 
-  const teamName = (match: any, side: "team1" | "team2"): string => {
+  const teamName = (match: BracketMatch, side: "team1" | "team2"): string => {
     const id = match[`${side}Id`];
     if (!id) return "---";
     if (isIndividual && playerNames?.[id]) return playerNames[id];
@@ -110,8 +173,11 @@ export function BracketInteractive({
     return id.slice(0, 8);
   };
 
-  // ── Find the user's next match (latest round first) ──
-  const userNextMatch = useMemo(() => {
+  const inTeams = (id: string | null): boolean => id !== null && userTeamIds.includes(id);
+
+  // Próximo partido del usuario: se calcula en cada render (pocos rondas y
+  // los arreglos de props cambian por petición; un useMemo aquí no aporta).
+  const userNextMatch = (() => {
     if (!userId || rounds.length === 0) return null;
     // Iterate rounds in REVERSE — the highest round where the user appears is their current match
     for (let ri = rounds.length - 1; ri >= 0; ri--) {
@@ -119,14 +185,14 @@ export function BracketInteractive({
       for (const match of round.matches) {
         if (match.status === "COMPLETED") continue;
         const isInMatch = isTeamBased()
-          ? userTeamIds.includes(match.team1Id) || userTeamIds.includes(match.team2Id)
+          ? inTeams(match.team1Id) || inTeams(match.team2Id)
           : match.team1Id === userId || match.team2Id === userId;
         if (isInMatch) {
           const opponent = isTeamBased()
-            ? (userTeamIds.includes(match.team1Id) ? teamName(match, "team2") : teamName(match, "team1"))
+            ? (inTeams(match.team1Id) ? teamName(match, "team2") : teamName(match, "team1"))
             : (match.team1Id === userId ? teamName(match, "team2") : teamName(match, "team1"));
           const myTeam = isTeamBased()
-            ? (userTeamIds.includes(match.team1Id) ? teamName(match, "team1") : teamName(match, "team2"))
+            ? (inTeams(match.team1Id) ? teamName(match, "team1") : teamName(match, "team2"))
             : teamName(match, match.team1Id === userId ? "team1" : "team2");
           return {
             match,
@@ -139,12 +205,12 @@ export function BracketInteractive({
       }
     }
     return null;
-  }, [rounds, userId, userTeamIds]);
+  })();
 
   // ── Check if user is in a specific match ──
-  const isUserInMatch = (match: any): boolean => {
+  const isUserInMatch = (match: BracketMatch): boolean => {
     if (!userId) return false;
-    if (isTeamBased()) return userTeamIds.includes(match.team1Id) || userTeamIds.includes(match.team2Id);
+    if (isTeamBased()) return inTeams(match.team1Id) || inTeams(match.team2Id);
     return match.team1Id === userId || match.team2Id === userId;
   };
 
@@ -216,7 +282,7 @@ export function BracketInteractive({
       setStatusMsg("No puede haber empate. Define un ganador.");
       return;
     }
-    const match = rounds.find((r: any) => r.id === roundId)?.matches.find((m: any) => m.id === matchId);
+    const match = rounds.find((r: BracketRound) => r.id === roundId)?.matches.find((m: BracketMatch) => m.id === matchId);
     const t1 = match ? teamName(match, "team1") : "???";
     const t2 = match ? teamName(match, "team2") : "???";
     const winner = sc1 > sc2 ? t1 : t2;
@@ -226,7 +292,7 @@ export function BracketInteractive({
 
   // Quick-declare: set winner with default 1-0 score
   const quickDeclareWinner = (matchId: string, roundId: string, winnerSlot: "team1" | "team2") => {
-    const match = rounds.find((r: any) => r.id === roundId)?.matches.find((m: any) => m.id === matchId);
+    const match = rounds.find((r: BracketRound) => r.id === roundId)?.matches.find((m: BracketMatch) => m.id === matchId);
     if (!match) return;
     const t1 = teamName(match, "team1");
     const t2 = teamName(match, "team2");
@@ -242,7 +308,7 @@ export function BracketInteractive({
     const { matchId, roundId, s1, s2 } = confirmData;
     setLoading(matchId);
     setConfirmData(null);
-    const match = rounds.find((r: any) => r.id === roundId)?.matches.find((m: any) => m.id === matchId);
+    const match = rounds.find((r: BracketRound) => r.id === roundId)?.matches.find((m: BracketMatch) => m.id === matchId);
     const winnerId = s1 > s2 ? match?.team1Id : s2 > s1 ? match?.team2Id : null;
 
     try {
@@ -281,16 +347,16 @@ export function BracketInteractive({
         const colors = ["#C8AA6E", "#00B853", "#E84057", "#0397AB", "#7B8FA1", "#FFD700", "#FF69B4", "#00CED1"];
         return (
           <>
-            {/* Confetti (client-only to avoid hydration mismatch) */}
-            {showConfetti && Array.from({ length: 50 }).map((_, i) => (
+            {/* Confeti determinista (mismos valores en servidor y cliente) */}
+            {CONFETTI.map((piece, i) => (
               <div key={i} className="confetti-piece" style={{
-                left: `${Math.random() * 100}%`,
+                left: `${piece.left}%`,
                 backgroundColor: colors[i % colors.length],
-                animationDuration: `${2 + Math.random() * 3}s`,
-                animationDelay: `${Math.random() * 0.5}s`,
-                width: `${6 + Math.random() * 8}px`,
-                height: `${6 + Math.random() * 8}px`,
-                borderRadius: Math.random() > 0.5 ? "50%" : "2px",
+                animationDuration: `${piece.duration}s`,
+                animationDelay: `${piece.delay}s`,
+                width: `${piece.size}px`,
+                height: `${piece.size}px`,
+                borderRadius: piece.round ? "50%" : "2px",
               }} />
             ))}
             {/* Champion banner */}
@@ -326,7 +392,7 @@ export function BracketInteractive({
         {canEdit && !hasRounds && (
           <Button onClick={initBracket} disabled={loading === "init" || allParticipants.length < 2} className="w-full sm:w-auto">
             {loading === "init" ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
-            {loading === "init" ? "Creando..." : "Inicializar Bracket"}
+            {loading === "init" ? "Creando..." : "Crear llave manual"}
           </Button>
         )}
       </div>
@@ -336,6 +402,11 @@ export function BracketInteractive({
           <Check className="w-4 h-4" />
           {statusMsg}
         </div>
+      )}
+
+      {/* ── Tabla de posiciones (round-robin) ── */}
+      {tournament.bracketType === "ROUND_ROBIN" && (
+        <StandingsTable tournamentId={tournamentId} refreshKey={liveTick} />
       )}
 
       {/* ── USER NEXT MATCH HIGHLIGHT ── */}
@@ -373,17 +444,17 @@ export function BracketInteractive({
         </div>
       )}
 
-      {!hasRounds && canEdit && (
+      {!hasRounds && (
         <Card className="p-6 text-center">
           <Swords className="w-10 h-10 text-muted mx-auto mb-3 opacity-30" />
-          <p className="text-muted font-medium">
-            {allParticipants.length < 2
-              ? "Se necesitan al menos 2 participantes para crear el bracket"
-              : "Presiona 'Inicializar Bracket' para crear la estructura del torneo"}
-          </p>
+          <p className="text-muted font-medium">El organizador aún no genera la llave</p>
           <p className="text-xs text-muted mt-1">
             {allParticipants.length} participante{allParticipants.length !== 1 ? "s" : ""} registrado{allParticipants.length !== 1 ? "s" : ""}
+            {!canEdit && allParticipants.length < 2 ? "" : ""}
           </p>
+          {canEdit && allParticipants.length >= 2 && (
+            <p className="text-xs text-gold mt-2">Usa “Crear llave manual” para acomodarlos a mano</p>
+          )}
         </Card>
       )}
 
@@ -409,9 +480,17 @@ export function BracketInteractive({
             </div>
           )}
 
-          <div className="order-1 lg:order-2 overflow-x-auto pb-4">
+          <div className="order-1 lg:order-2">
+            <div
+              className="overflow-x-auto pb-2 overscroll-x-contain"
+              onScroll={(e) => {
+                const el = e.currentTarget;
+                const max = el.scrollWidth - el.clientWidth;
+                setScrollProgress(max > 0 ? el.scrollLeft / max : 0);
+              }}
+            >
             <div className="flex gap-5 sm:gap-8 min-w-max">
-              {rounds.map((round: any) => (
+              {rounds.map((round: BracketRound) => (
                 <div key={round.id} className="flex flex-col gap-3 min-w-[230px] sm:min-w-[280px]">
                   <h3 className="text-xs font-black text-gold text-center mb-1 uppercase tracking-widest">
                     Ronda {round.roundNumber}
@@ -420,7 +499,7 @@ export function BracketInteractive({
                     )}
                   </h3>
 
-                  {round.matches.map((match: any) => {
+                  {round.matches.map((match: BracketMatch) => {
                     const mId = match.id;
                     const isEditing = editingMatch === mId;
                     const p1 = allParticipants.find((p) => p.id === match.team1Id) || null;
@@ -460,7 +539,8 @@ export function BracketInteractive({
                           slot="team1"
                           participant={p1}
                           isWinner={winnerSide === "team1"}
-                          isUser={isTeamBased() ? userTeamIds.includes(match.team1Id) : match.team1Id === userId}
+                          isUser={isTeamBased() ? inTeams(match.team1Id) : match.team1Id === userId}
+                          canEdit={canEdit}
                           onAssign={(pid) => assignToSlot(mId, "team1", pid)}
                           onRemove={() => removeFromSlot(mId, "team1")}
                           availableParticipants={allParticipants.filter(
@@ -472,7 +552,7 @@ export function BracketInteractive({
                         <div className={`text-center py-1.5 font-bold ${
                           isCompleted ? "text-sm text-green-400" : "text-[10px] text-muted"
                         }`}>
-                          {!hasBoth ? "BYE →" : isCompleted ? `${match.score1 ?? 0} - ${match.score2 ?? 0}` : "VS"}
+                          {!p1 && !p2 ? "Por asignar" : !hasBoth ? "Sin rival (pasa de ronda)" : isCompleted ? `${match.score1 ?? 0} - ${match.score2 ?? 0}` : "VS"}
                         </div>
 
                         {/* Slot B */}
@@ -481,7 +561,8 @@ export function BracketInteractive({
                           slot="team2"
                           participant={p2}
                           isWinner={winnerSide === "team2"}
-                          isUser={isTeamBased() ? userTeamIds.includes(match.team2Id) : match.team2Id === userId}
+                          isUser={isTeamBased() ? inTeams(match.team2Id) : match.team2Id === userId}
+                          canEdit={canEdit}
                           onAssign={(pid) => assignToSlot(mId, "team2", pid)}
                           onRemove={() => removeFromSlot(mId, "team2")}
                           availableParticipants={allParticipants.filter(
@@ -494,18 +575,20 @@ export function BracketInteractive({
                           <div className="flex items-center justify-center gap-3 mt-2 pt-2 border-t border-border">
                             <button
                               onClick={() => quickDeclareWinner(mId, round.id, "team1")}
-                              className="flex items-center gap-1 px-2.5 py-1 text-[10px] text-green-400 border border-green-500/30 rounded-lg hover:bg-green-500/10 transition-colors"
+                              className="flex items-center justify-center gap-1 min-h-[40px] px-2.5 py-1.5 text-[10px] text-green-400 border border-green-500/30 rounded-lg hover:bg-green-500/10 transition-colors"
                               title={`Declarar ganador: ${p1?.name}`}
                             >
-                              👑 {p1?.name?.slice(0, 12)}{(p1?.name?.length ?? 0) > 12 ? "…" : ""}
+                              <Trophy className="w-3 h-3" />
+                              {p1?.name?.slice(0, 12)}{(p1?.name?.length ?? 0) > 12 ? "…" : ""}
                             </button>
                             <span className="text-[10px] text-muted">VS</span>
                             <button
                               onClick={() => quickDeclareWinner(mId, round.id, "team2")}
-                              className="flex items-center gap-1 px-2.5 py-1 text-[10px] text-green-400 border border-green-500/30 rounded-lg hover:bg-green-500/10 transition-colors"
+                              className="flex items-center justify-center gap-1 min-h-[40px] px-2.5 py-1.5 text-[10px] text-green-400 border border-green-500/30 rounded-lg hover:bg-green-500/10 transition-colors"
                               title={`Declarar ganador: ${p2?.name}`}
                             >
-                              👑 {p2?.name?.slice(0, 12)}{(p2?.name?.length ?? 0) > 12 ? "…" : ""}
+                              <Trophy className="w-3 h-3" />
+                              {p2?.name?.slice(0, 12)}{(p2?.name?.length ?? 0) > 12 ? "…" : ""}
                             </button>
                           </div>
                         )}
@@ -562,7 +645,7 @@ export function BracketInteractive({
                               </div>
                             ) : (
                               <button onClick={() => { setEditingMatch(mId); setEditScores({ s1: String(match.score1 ?? ""), s2: String(match.score2 ?? "") }); }}
-                                className="w-full py-1.5 text-[10px] text-gold border border-gold/30 rounded-lg hover:bg-gold/10 transition-colors">
+                                className="w-full min-h-[40px] py-2 text-[11px] text-gold border border-gold/30 rounded-lg hover:bg-gold/10 transition-colors">
                                 Ingresar resultado
                               </button>
                             )}
@@ -578,9 +661,9 @@ export function BracketInteractive({
                                   onChange={(e) => setEditScheduleDate(e.target.value)}
                                   className="flex-1 px-2 py-1 bg-background border border-border rounded text-[10px]" />
                                 <button onClick={() => saveSchedule(mId, round.id)}
-                                  className="px-2 py-1 bg-gold text-background rounded text-[9px] font-bold">OK</button>
+                                  className="min-h-[40px] min-w-[40px] px-2 py-2 bg-gold text-background rounded text-[10px] font-bold flex items-center justify-center">OK</button>
                                 <button onClick={() => setIsEditingSchedule(null)}
-                                  className="px-2 py-1 border border-border rounded text-[9px]">X</button>
+                                  className="min-h-[40px] min-w-[40px] px-2 py-2 border border-border rounded text-[10px] flex items-center justify-center">X</button>
                               </div>
                             ) : (
                               (() => {
@@ -590,16 +673,18 @@ export function BracketInteractive({
                                     setIsEditingSchedule(mId);
                                     setEditScheduleDate(formatLocalDatetime());
                                   }}
-                                    className="w-full py-1.5 text-[11px] text-red-400 border border-red-500/30 rounded-lg hover:bg-red-500/10 transition-colors flex items-center justify-center gap-1.5">
-                                    ⏰ Reprogramar partido atrasado
+                                    className="w-full min-h-[40px] py-2 text-[11px] text-red-400 border border-red-500/30 rounded-lg hover:bg-red-500/10 transition-colors flex items-center justify-center gap-1.5">
+                                    <Clock className="w-3.5 h-3.5" />
+                                    Reprogramar partido atrasado
                                   </button>
                                 ) : (
                                   <button onClick={() => {
                                     setIsEditingSchedule(mId);
                                     setEditScheduleDate(match.scheduledAt ? new Date(match.scheduledAt).toISOString().slice(0, 16) : formatLocalDatetime());
                                   }}
-                                    className="text-[9px] text-gold hover:underline flex items-center gap-1">
-                                    🕐 {match.scheduledAt ? "Cambiar horario" : "Programar"}
+                                    className="min-h-[40px] px-1 text-[10px] text-gold hover:underline flex items-center justify-center gap-1">
+                                    <Calendar className="w-3.5 h-3.5" />
+                                    {match.scheduledAt ? "Cambiar horario" : "Programar"}
                                   </button>
                                 );
                               })()
@@ -629,6 +714,14 @@ export function BracketInteractive({
                   })}
                 </div>
               ))}
+            </div>
+            </div>
+            {/* Pista de desplazamiento para pantallas chicas */}
+            <div className="mt-2 h-1.5 bg-border rounded-full overflow-hidden">
+              <div
+                className="h-full w-1/4 bg-gold rounded-full transition-transform"
+                style={{ transform: `translateX(${scrollProgress * 300}%)` }}
+              />
             </div>
           </div>
         </div>

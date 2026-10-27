@@ -1,7 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
+import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
+
+const changePasswordSchema = z.object({
+  currentPassword: z.string().min(1, "Debes ingresar tu contraseña actual"),
+  newPassword: z
+    .string()
+    .min(6, "La nueva contraseña debe tener al menos 6 caracteres"),
+});
 
 export async function POST(req: NextRequest) {
   try {
@@ -10,33 +18,33 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "No autorizado" }, { status: 401 });
     }
 
-    const { currentPassword, newPassword } = await req.json();
-
-    if (!currentPassword || !newPassword) {
+    const body = await req.json();
+    const parsed = changePasswordSchema.safeParse(body);
+    if (!parsed.success) {
       return NextResponse.json(
-        { error: "Contraseña actual y nueva son requeridas" },
+        { error: parsed.error.issues[0]?.message ?? "Datos inválidos" },
         { status: 400 }
       );
     }
-
-    if (newPassword.length < 6) {
-      return NextResponse.json(
-        { error: "La nueva contraseña debe tener al menos 6 caracteres" },
-        { status: 400 }
-      );
-    }
+    const { currentPassword, newPassword } = parsed.data;
 
     const user = await prisma.user.findUnique({ where: { id: session.user.id } });
     if (!user) {
       return NextResponse.json({ error: "Usuario no encontrado" }, { status: 404 });
     }
 
-    // Verify current password
-    if (user.passwordHash) {
-      const valid = await bcrypt.compare(currentPassword, user.passwordHash);
-      if (!valid) {
-        return NextResponse.json({ error: "Contraseña actual incorrecta" }, { status: 403 });
-      }
+    // La contraseña actual siempre es obligatoria: sin passwordHash registrado
+    // no hay forma de verificar identidad, así que se rechaza en lugar de
+    // dejar pasar el cambio.
+    if (!user.passwordHash) {
+      return NextResponse.json(
+        { error: "Cuenta sin contraseña. Contacta al administrador." },
+        { status: 403 }
+      );
+    }
+    const valid = await bcrypt.compare(currentPassword, user.passwordHash);
+    if (!valid) {
+      return NextResponse.json({ error: "Contraseña actual incorrecta" }, { status: 403 });
     }
 
     // Hash new password

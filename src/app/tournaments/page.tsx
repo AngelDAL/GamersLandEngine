@@ -20,9 +20,9 @@ const statusStyles: Record<string, string> = {
   CANCELLED: "text-red-400 bg-red-500/10 border-red-500/30",
 };
 
-const statusLabels: Record<string, string> = {
+export const statusLabels: Record<string, string> = {
   OPEN_REGISTRATION: "Abierto",
-  IN_PROGRESS: "En vivo",
+  IN_PROGRESS: "En curso",
   COMPLETED: "Finalizado",
   DRAFT: "Planeación",
   CLOSED: "Cerrado",
@@ -42,9 +42,30 @@ function fmtTime(d: Date | string) {
 }
 
 // ── Card component to reduce duplication ──
+type NextMatchInfo = { scheduledAt: Date | string | null } | null;
+
+type CardTournament = {
+  /** Solo en "Mis torneos": el próximo partido pendiente del usuario. */
+  nextMatch?: NextMatchInfo;
+  id: string;
+  name: string;
+  game: string;
+  status: string;
+  imageUrl: string | null;
+  location: string | null;
+  eventDate: Date | string;
+  // Decimal de Prisma: se pasa sin convertir y el valor ya se formatea al pintar.
+  entryFee: unknown;
+  maxTeams: number;
+  prizes: { value: string | null }[];
+  _count: { registrations: number };
+};
+
+type TopPrize = { value: string | null } | null | undefined;
+
 function TournamentCard({ tournament, link, game, topPrize, nextMatch, isCompleted, hideStatus }: {
-  tournament: any; link: string; game: ReturnType<typeof getGameConfig>;
-  topPrize: any; nextMatch: any; isCompleted: boolean; hideStatus?: boolean;
+  tournament: CardTournament; link: string; game: ReturnType<typeof getGameConfig>;
+  topPrize: TopPrize; nextMatch?: NextMatchInfo; isCompleted: boolean; hideStatus?: boolean;
 }) {
   const t = tournament;
   return (
@@ -57,7 +78,7 @@ function TournamentCard({ tournament, link, game, topPrize, nextMatch, isComplet
           <div className="relative h-full flex items-end p-4">
             <div className="flex items-center gap-2">
               <span className="text-white font-bold text-sm drop-shadow-lg">{game.label}</span>
-              {isCompleted && <Badge variant="gold" className="text-[10px]">✓ Completado</Badge>}
+              {isCompleted && <Badge variant="gold" className="text-[10px]">Completado</Badge>}
             </div>
           </div>
         </div>
@@ -74,7 +95,7 @@ function TournamentCard({ tournament, link, game, topPrize, nextMatch, isComplet
           {nextMatch !== undefined && (
             <div className="bg-background border border-border rounded-lg p-3 mb-3">
               {isCompleted ? (
-                <p className="text-xs text-muted text-center">🏆 Torneo finalizado</p>
+                <p className="text-xs text-muted text-center">Torneo finalizado</p>
               ) : nextMatch ? (
                 <div className="space-y-1.5">
                   <p className="text-[10px] text-gold font-bold uppercase tracking-wider">Próximo partido</p>
@@ -135,7 +156,7 @@ export default async function TournamentsPage() {
   });
 
   // ── User's registered tournaments with next match ──
-  let myTournaments: any[] = [];
+  let myTournaments: CardTournament[] = [];
   if (session?.user?.id) {
     const regs = await prisma.tournamentRegistration.findMany({
       where: { userId: session.user.id },
@@ -166,17 +187,15 @@ export default async function TournamentsPage() {
       });
 
       // Find next pending match — check both userId AND teamId
-      const orConditions: any[] = [
-        { team1Id: session.user.id },
-        { team2Id: session.user.id },
-      ];
-      if (allMyTeamIds.length > 0) {
-        orConditions.push({ team1Id: { in: allMyTeamIds } });
-        orConditions.push({ team2Id: { in: allMyTeamIds } });
-      }
       const userMatchQuery = await prisma.match.findMany({
         where: {
-          OR: orConditions,
+          OR: [
+            { team1Id: session.user.id },
+            { team2Id: session.user.id },
+            ...(allMyTeamIds.length > 0
+              ? [{ team1Id: { in: allMyTeamIds } }, { team2Id: { in: allMyTeamIds } }]
+              : []),
+          ],
           status: { not: "COMPLETED" },
           round: { tournamentId: { in: uniqueIds } },
         },
@@ -185,7 +204,7 @@ export default async function TournamentsPage() {
         take: 20,
       });
 
-      const matchByTournament: Record<string, any> = {};
+      const matchByTournament: Record<string, (typeof userMatchQuery)[number]> = {};
       for (const m of userMatchQuery) {
         const tid = m.round.tournamentId;
         if (!matchByTournament[tid]) matchByTournament[tid] = m;
@@ -221,7 +240,7 @@ export default async function TournamentsPage() {
             <span className="text-xs text-muted font-normal">({myTournaments.length})</span>
           </h2>
           <div className="grid gap-3 sm:gap-4 md:grid-cols-2 lg:grid-cols-3">
-            {myTournaments.map((t: any) => {
+            {myTournaments.map((t) => {
               const game = getGameConfig(t.game);
               const link = `/tournaments/${t.id}`;
               return (

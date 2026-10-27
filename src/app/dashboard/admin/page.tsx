@@ -4,9 +4,18 @@ import { redirect } from "next/navigation";
 import Link from "next/link";
 import { Card } from "@/components/ui/card";
 import {
-  Trophy, Users, Gamepad2, Plus, Settings, BarChart3,
-  Calendar, Swords, ExternalLink, ArrowRight,
+  Trophy, Users, Gamepad2, Plus, Settings,
+  Calendar, Swords, ExternalLink, ArrowRight, UserCog,
 } from "lucide-react";
+
+const statusLabels: Record<string, string> = {
+  OPEN_REGISTRATION: "Abierto",
+  IN_PROGRESS: "En vivo",
+  COMPLETED: "Finalizado",
+  DRAFT: "Planeación",
+  CLOSED: "Cerrado",
+  CANCELLED: "Cancelado",
+};
 
 export default async function AdminDashboard() {
   const session = await auth();
@@ -34,17 +43,24 @@ export default async function AdminDashboard() {
           </h1>
           <p className="text-muted text-sm mt-1">Control total del evento</p>
         </div>
-        <div className="flex gap-3">
+        <div className="flex flex-wrap gap-3">
+          <Link
+            href="/dashboard/admin/users"
+            className="inline-flex items-center gap-2 px-5 py-2.5 min-h-11 border border-gold text-gold font-bold rounded-xl text-sm hover:bg-gold/10 transition-all"
+          >
+            <UserCog className="w-4 h-4" />
+            USUARIOS
+          </Link>
           <Link
             href="/tournaments/create"
-            className="inline-flex items-center gap-2 px-5 py-2.5 bg-gold text-background font-bold rounded-xl text-sm hover:bg-gold-hover transition-all shadow-lg shadow-gold/20"
+            className="inline-flex items-center gap-2 px-5 py-2.5 min-h-11 bg-gold text-background font-bold rounded-xl text-sm hover:bg-gold-hover transition-all shadow-lg shadow-gold/20"
           >
             <Plus className="w-4 h-4" />
             CREAR TORNEO
           </Link>
           <Link
             href="/tournaments"
-            className="inline-flex items-center gap-2 px-5 py-2.5 border border-gold text-gold font-bold rounded-xl text-sm hover:bg-gold/10 transition-all"
+            className="inline-flex items-center gap-2 px-5 py-2.5 min-h-11 border border-gold text-gold font-bold rounded-xl text-sm hover:bg-gold/10 transition-all"
           >
             VER TODOS
           </Link>
@@ -128,7 +144,7 @@ export default async function AdminDashboard() {
                   <div>
                     <p className="font-medium text-sm group-hover:text-gold transition-colors">{t.name}</p>
                     <p className="text-xs text-muted">
-                      {t._count.registrations} registros · {t.game.replace(/_/g, " ")}
+                      {statusLabels[t.status] || "Estado desconocido"} · {t._count.registrations} inscritos · {t.game.replace(/_/g, " ")}
                     </p>
                   </div>
                 </div>

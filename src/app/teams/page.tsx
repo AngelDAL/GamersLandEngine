@@ -16,8 +16,6 @@ export default async function TeamsPage() {
     orderBy: { name: "asc" },
   });
 
-  const isCaptainOrAdmin = session.user.role === "ADMIN";
-
   return (
     <div className="max-w-5xl mx-auto px-4 py-8">
       <div className="flex items-center justify-between mb-8">
@@ -31,7 +29,15 @@ export default async function TeamsPage() {
       </div>
 
       {teams.length === 0 ? (
-        <p className="text-muted text-center py-12">No hay equipos registrados</p>
+        <div className="text-center py-16">
+          <p className="text-muted text-sm mb-4">Aún no hay equipos registrados</p>
+          <Link
+            href="/teams/create"
+            className="inline-flex items-center gap-2 px-5 py-3 min-h-11 bg-gold text-background font-bold rounded-xl text-sm hover:bg-gold-hover"
+          >
+            Crear el primer equipo
+          </Link>
+        </div>
       ) : (
         <div className="grid gap-4 md:grid-cols-2">
           {teams.map((team) => (

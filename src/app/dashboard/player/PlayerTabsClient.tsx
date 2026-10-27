@@ -17,7 +17,7 @@ export function PlayerTabsClient({
   children,
 }: {
   settingsData: SettingsData;
-  children: [React.ReactNode, React.ReactNode];
+  children: React.ReactNode;
 }) {
   const [activeTab, setActiveTab] = useState<Tab>("panel");
 
@@ -38,6 +38,7 @@ export function PlayerTabsClient({
               key={tab.id}
               type="button"
               onClick={() => setActiveTab(tab.id)}
+              aria-current={isActive ? "page" : undefined}
               className={`flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-sm font-bold transition-all ${
                 isActive
                   ? "bg-gold text-background shadow-lg shadow-gold/20"
@@ -52,7 +53,7 @@ export function PlayerTabsClient({
       </div>
 
       {/* Tab content */}
-      {activeTab === "panel" && children[0]}
+      {activeTab === "panel" && children}
       {activeTab === "settings" && (
         <SettingsPanel
           userEmail={settingsData.userEmail}
